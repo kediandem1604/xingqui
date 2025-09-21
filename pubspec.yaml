@@ -1,0 +1,39 @@
+name: xiangqi_flutter
+description: "Xiangqi Flutter App with Engine Integration"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.5.1
+  freezed_annotation: ^2.4.4
+  collection: ^1.18.0
+  flutter_svg: ^2.0.10+1
+  path_provider: ^2.1.4
+  process_run: ^1.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.11
+  freezed: ^2.5.7
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter packages.
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/pieces/
+    - assets/boards/
+    - assets/pieces/xiangqi/
