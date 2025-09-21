@@ -880,16 +880,23 @@ class BoardController extends StateNotifier<BoardState> {
     final piece = board[rank][file];
     if (piece.isEmpty) return possibleMoves;
 
+    AppLogger().log(
+      'Calculating possible moves for piece $piece at $file,$rank',
+    );
+
     for (int toRank = 0; toRank < 10; toRank++) {
       for (int toFile = 0; toFile < 9; toFile++) {
         if (toFile == file && toRank == rank) continue;
         final uci = _fileRankToUci(file, rank, toFile, toRank);
-        if (XiangqiRules.isValidMove(state.fen, uci)) {
+        final isValid = XiangqiRules.isValidMove(state.fen, uci);
+        if (isValid) {
+          AppLogger().log('Valid move found: $uci');
           possibleMoves.add(Offset(toFile.toDouble(), toRank.toDouble()));
         }
       }
     }
 
+    AppLogger().log('Total possible moves: ${possibleMoves.length}');
     return possibleMoves;
   }
 

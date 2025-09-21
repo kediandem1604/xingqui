@@ -253,21 +253,35 @@ class XiangqiRules {
   }
 
   static bool _isValidPawnMove(List<List<String>> board, Move move) {
-    // Pawn moves forward, or sideways after crossing river
-    final isRedPawn = move.fromRank < 5;
-    final hasCrossedRiver = isRedPawn ? move.fromRank >= 5 : move.fromRank < 5;
+    // Pawn moves forward only until crossing river, then can move sideways too
+    // In our coordinate system:
+    // - Board ranks 0-9 (top to bottom)
+    // - River is between ranks 4 and 5
+    // - Red pawns start at ranks 6,7,8 and move UP (decreasing rank)
+    // - Black pawns start at ranks 1,2,3 and move DOWN (increasing rank)
+
+    final piece = board[move.fromRank][move.fromFile];
+    final isRedPawn = piece == piece.toUpperCase(); // Red pieces are uppercase
 
     print(
       'Pawn move: ${move.fromFile}${move.fromRank} -> ${move.toFile}${move.toRank}',
     );
-    print('isRedPawn: $isRedPawn, hasCrossedRiver: $hasCrossedRiver');
+    print('isRedPawn: $isRedPawn, piece: $piece');
 
     if (isRedPawn) {
-      // Red pawn moves down (increasing rank)
+      // Red pawn moves UP (decreasing rank numbers)
+      // Before crossing river (rank >= 5): can only move forward (UP)
+      // After crossing river (rank <= 4): can move forward OR sideways
+
+      final hasCrossedRiver = move.fromRank <= 4; // Red pawn crossed river
+      print(
+        'Red pawn - fromRank: ${move.fromRank}, hasCrossedRiver: $hasCrossedRiver',
+      );
+
       if (hasCrossedRiver) {
-        // After crossing river: can move forward OR sideways
-        if (move.fromFile == move.toFile && move.toRank - move.fromRank == 1) {
-          return true; // Forward
+        // After crossing river: can move forward (UP) OR sideways
+        if (move.fromFile == move.toFile && move.fromRank - move.toRank == 1) {
+          return true; // Forward (UP)
         }
         if (move.fromRank == move.toRank &&
             (move.toFile - move.fromFile).abs() == 1) {
@@ -275,18 +289,26 @@ class XiangqiRules {
         }
         return false;
       } else {
-        // Before crossing river: can only move forward
-        if (move.fromFile == move.toFile && move.toRank - move.fromRank == 1) {
+        // Before crossing river: can ONLY move forward (UP)
+        if (move.fromFile == move.toFile && move.fromRank - move.toRank == 1) {
           return true; // Forward only
         }
         return false;
       }
     } else {
-      // Black pawn moves up (decreasing rank)
+      // Black pawn moves DOWN (increasing rank numbers)
+      // Before crossing river (rank <= 4): can only move forward (DOWN)
+      // After crossing river (rank >= 5): can move forward OR sideways
+
+      final hasCrossedRiver = move.fromRank >= 5; // Black pawn crossed river
+      print(
+        'Black pawn - fromRank: ${move.fromRank}, hasCrossedRiver: $hasCrossedRiver',
+      );
+
       if (hasCrossedRiver) {
-        // After crossing river: can move forward OR sideways
-        if (move.fromFile == move.toFile && move.fromRank - move.toRank == 1) {
-          return true; // Forward
+        // After crossing river: can move forward (DOWN) OR sideways
+        if (move.fromFile == move.toFile && move.toRank - move.fromRank == 1) {
+          return true; // Forward (DOWN)
         }
         if (move.fromRank == move.toRank &&
             (move.toFile - move.fromFile).abs() == 1) {
@@ -294,8 +316,8 @@ class XiangqiRules {
         }
         return false;
       } else {
-        // Before crossing river: can only move forward
-        if (move.fromFile == move.toFile && move.fromRank - move.toRank == 1) {
+        // Before crossing river: can ONLY move forward (DOWN)
+        if (move.fromFile == move.toFile && move.toRank - move.fromRank == 1) {
           return true; // Forward only
         }
         return false;
