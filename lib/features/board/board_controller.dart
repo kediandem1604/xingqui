@@ -464,33 +464,72 @@ class BoardController extends StateNotifier<BoardState> {
   Future<void> back() async {
     if (!state.canBack || _engine == null) return;
 
+    final newPointer = state.pointer - 1;
+
+    // Reconstruct FEN from move history up to the new pointer
+    String newFen = defaultXqFen;
+    bool newRedToMove = true;
+
+    for (int i = 0; i < newPointer; i++) {
+      newFen = FenParser.applyMove(newFen, state.moves[i]);
+      newRedToMove = !newRedToMove;
+    }
+
+    AppLogger().log(
+      'Back: pointer ${state.pointer} -> $newPointer, FEN updated',
+    );
+
     state = state.copyWith(
-      pointer: state.pointer - 1,
+      pointer: newPointer,
+      fen: newFen,
+      redToMove: newRedToMove,
       bestLines: [],
-      canBack: state.pointer - 1 > 0,
+      canBack: newPointer > 0,
       canNext: true,
       selectedFile: null,
       selectedRank: null,
       possibleMoves: [],
+      pendingAnimation: null, // Clear any pending animation
     );
 
+    // Set engine position to match the board state
+    await _engine!.setPosition(newFen, state.moves.take(newPointer).toList());
     await _analyzePosition(movetimeMs: 1000);
   }
 
   Future<void> next() async {
     if (!state.canNext || _engine == null) return;
 
+    final newPointer = state.pointer + 1;
+
+    // Reconstruct FEN from move history up to the new pointer
+    String newFen = defaultXqFen;
+    bool newRedToMove = true;
+
+    for (int i = 0; i < newPointer; i++) {
+      newFen = FenParser.applyMove(newFen, state.moves[i]);
+      newRedToMove = !newRedToMove;
+    }
+
+    AppLogger().log(
+      'Next: pointer ${state.pointer} -> $newPointer, FEN updated',
+    );
+
     state = state.copyWith(
-      pointer: state.pointer + 1,
+      pointer: newPointer,
+      fen: newFen,
+      redToMove: newRedToMove,
       bestLines: [],
       canBack: true,
-      canNext: state.pointer + 1 < state.moves.length,
+      canNext: newPointer < state.moves.length,
       selectedFile: null,
       selectedRank: null,
       possibleMoves: [],
+      pendingAnimation: null, // Clear any pending animation
     );
 
-    // Use movetime for consistency across engines
+    // Set engine position to match the board state
+    await _engine!.setPosition(newFen, state.moves.take(newPointer).toList());
     await _analyzePosition(movetimeMs: 1000);
   }
 
