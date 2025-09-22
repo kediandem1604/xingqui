@@ -3,15 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'board_controller.dart';
 import 'package:process_run/shell.dart';
 import '../../core/logger.dart';
+// Board recognition removed
 
 class Controls extends ConsumerWidget {
   const Controls({super.key});
-  
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(boardControllerProvider);
     final controller = ref.read(boardControllerProvider.notifier);
-    
+
     return Container(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -34,7 +35,7 @@ class Controls extends ConsumerWidget {
               ),
             ],
           ),
-          
+
           const SizedBox(height: 16),
 
           // Logs
@@ -48,7 +49,8 @@ class Controls extends ConsumerWidget {
                     final shell = Shell();
                     if (Theme.of(context).platform == TargetPlatform.windows) {
                       await shell.run('start "" "$path"');
-                    } else if (Theme.of(context).platform == TargetPlatform.macOS) {
+                    } else if (Theme.of(context).platform ==
+                        TargetPlatform.macOS) {
                       await shell.run('open "$path"');
                     } else {
                       await shell.run('xdg-open "$path"');
@@ -59,7 +61,7 @@ class Controls extends ConsumerWidget {
               ),
             ],
           ),
-          
+
           // MultiPV selection
           Row(
             children: [
@@ -77,9 +79,9 @@ class Controls extends ConsumerWidget {
               Text('${state.multiPv}'),
             ],
           ),
-          
+
           const SizedBox(height: 16),
-          
+
           // Side selection
           Row(
             children: [
@@ -89,16 +91,13 @@ class Controls extends ConsumerWidget {
                 onPressed: (index) {
                   controller.onPickSide(red: index == 0);
                 },
-                children: const [
-                  Text('Red'),
-                  Text('Black'),
-                ],
+                children: const [Text('Red'), Text('Black')],
               ),
             ],
           ),
-          
+
           const SizedBox(height: 16),
-          
+
           // Navigation controls
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -117,9 +116,11 @@ class Controls extends ConsumerWidget {
               ),
             ],
           ),
-          
+
           const SizedBox(height: 16),
-          
+
+          // Board recognition UI removed
+
           // Game info
           Container(
             padding: const EdgeInsets.all(8),
@@ -141,4 +142,6 @@ class Controls extends ConsumerWidget {
       ),
     );
   }
+
+  // Camera navigation removed
 }

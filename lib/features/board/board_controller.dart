@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../engine/engine_base.dart';
 import '../../engine/engine_parser.dart';
@@ -9,6 +10,8 @@ import '../../engine/ucci_engine.dart';
 import '../../core/fen.dart';
 import '../../core/xiangqi_rules.dart';
 import '../../core/logger.dart';
+import '../../services/game_status_service.dart';
+import '../../widgets/game_notification.dart';
 
 // Best line information
 class BestLine {
@@ -56,6 +59,7 @@ class BoardState {
   final List<Offset> possibleMoves; // list of possible move destinations
   // Pending move animation (before FEN/state updates)
   final MoveAnimation? pendingAnimation;
+  final List<GameNotification> notifications;
 
   const BoardState({
     required this.fen,
@@ -74,6 +78,7 @@ class BoardState {
     this.selectedRank,
     this.possibleMoves = const [],
     this.pendingAnimation,
+    this.notifications = const [],
   });
 
   BoardState copyWith({
@@ -93,6 +98,7 @@ class BoardState {
     int? selectedRank,
     List<Offset>? possibleMoves,
     MoveAnimation? pendingAnimation,
+    List<GameNotification>? notifications,
     // explicit clear flags
     bool clearPendingAnimation = false,
     bool clearSelection = false,
@@ -115,6 +121,7 @@ class BoardState {
     pendingAnimation: clearPendingAnimation
         ? null
         : (pendingAnimation ?? this.pendingAnimation),
+    notifications: notifications ?? this.notifications,
   );
 
   static BoardState initial() => BoardState(
@@ -459,6 +466,24 @@ class BoardController extends StateNotifier<BoardState> {
 
     // Start analysis
     await _analyzePosition(movetimeMs: 1000);
+
+    // FORCE CHECK GAME STATUS with explicit error handling
+    try {
+      await AppLogger().log('=== FORCING GAME STATUS CHECK ===');
+      await _checkGameStatus();
+      await AppLogger().log('=== GAME STATUS CHECK COMPLETED ===');
+    } catch (e, stackTrace) {
+      await AppLogger().error(
+        'CRITICAL: _checkGameStatus failed',
+        e,
+        stackTrace,
+      );
+      // Force show error notification
+      _showNotification(
+        'ERROR: Could not check game status',
+        backgroundColor: Colors.red,
+      );
+    }
   }
 
   Future<void> back() async {
@@ -540,6 +565,230 @@ class BoardController extends StateNotifier<BoardState> {
     await _engine!.newGame();
     await _engine!.setMultiPV(state.multiPv);
     await _analyzePosition(movetimeMs: 1000);
+  }
+
+  /// Updates board position from recognized FEN
+  Future<void> setBoardFromFEN(String fen) async {
+    if (_engine == null) return;
+
+    await AppLogger().log('Setting board from recognized FEN: $fen');
+
+    // Validate FEN format
+    if (!_isValidFEN(fen)) {
+      await AppLogger().error('Invalid FEN format', fen);
+      throw Exception('Invalid FEN format');
+    }
+
+    // Parse FEN to get side to move
+    final fenParts = fen.split(' ');
+    final sideToMove = fenParts.length > 1 ? fenParts[1] : 'w';
+    final isRedToMove = sideToMove == 'w';
+
+    // Update state with new position
+    state = state.copyWith(
+      fen: fen,
+      redToMove: isRedToMove,
+      moves: const [], // Clear move history
+      pointer: 0,
+      bestLines: const [],
+      canBack: false,
+      canNext: false,
+      selectedFile: null,
+      selectedRank: null,
+      possibleMoves: const [],
+      pendingAnimation: null,
+      isEngineThinking: false,
+    );
+
+    // Set engine position
+    await _engine!.setPosition(fen, []);
+    await _analyzePosition(movetimeMs: 1000);
+
+    // Check game status
+    await _checkGameStatus();
+
+    await AppLogger().log('Board position updated successfully');
+  }
+
+  /// Checks game status and shows notifications
+  Future<void> _checkGameStatus() async {
+    try {
+      AppLogger().log('=== CHECKING GAME STATUS ===');
+      final fen = state.fen;
+      AppLogger().log('Current FEN: $fen');
+
+      // Check for check FIRST with enhanced logging
+      AppLogger().log('Checking for check...');
+      final isInCheck = GameStatusService.isInCheck(fen);
+      AppLogger().log('Is in check: $isInCheck');
+
+      if (isInCheck) {
+        final sideToMove = FenParser.getSideToMove(fen);
+        final currentPlayer = sideToMove == 'w' ? 'Red' : 'Black';
+        AppLogger().log(
+          '*** SHOWING CHECK NOTIFICATION for $currentPlayer ***',
+        );
+        _showNotification(
+          '${currentPlayer} is in CHECK!',
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        );
+        AppLogger().log('Check notification added to state');
+        AppLogger().log(
+          'Current notifications count: ${state.notifications.length}',
+        );
+      }
+
+      // Check for checkmate
+      AppLogger().log('Checking for checkmate...');
+      final isCheckmate = GameStatusService.isCheckmate(fen);
+      AppLogger().log('Is checkmate: $isCheckmate');
+      if (isCheckmate) {
+        final winner = GameStatusService.getWinner(fen);
+        AppLogger().log('Winner: $winner');
+        if (winner != null && winner != 'Draw') {
+          AppLogger().log('*** SHOWING CHECKMATE NOTIFICATION for $winner ***');
+          _showNotification(
+            '$winner WINS! Checkmate!',
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 5),
+          );
+        }
+        return; // Don't check stalemate if checkmate
+      }
+
+      // Check for stalemate only if not in check and not checkmate
+      if (!isInCheck) {
+        AppLogger().log('Checking for stalemate...');
+        final isStalemate = GameStatusService.isStalemate(fen);
+        AppLogger().log('Is stalemate: $isStalemate');
+        if (isStalemate) {
+          AppLogger().log('*** SHOWING STALEMATE NOTIFICATION ***');
+          _showNotification(
+            'DRAW! Stalemate!',
+            backgroundColor: Colors.blue,
+            duration: const Duration(seconds: 5),
+          );
+        }
+      }
+    } catch (e, stackTrace) {
+      AppLogger().error('Error checking game status', e, stackTrace);
+    }
+  }
+
+  /// Shows a game notification
+  void _showNotification(
+    String message, {
+    Color backgroundColor = Colors.red,
+    Color textColor = Colors.white,
+    Duration duration = const Duration(seconds: 3),
+  }) {
+    try {
+      AppLogger().log('=== SHOWING NOTIFICATION ===');
+      AppLogger().log('Message: $message');
+      AppLogger().log('Background color: $backgroundColor');
+      AppLogger().log('Duration: ${duration.inSeconds}s');
+      AppLogger().log(
+        'Current notifications count BEFORE: ${state.notifications.length}',
+      );
+
+      final notification = GameNotification(
+        message: message,
+        backgroundColor: backgroundColor,
+        textColor: textColor,
+        duration: duration,
+      );
+
+      final newNotifications = List<GameNotification>.from(state.notifications)
+        ..add(notification);
+      state = state.copyWith(notifications: newNotifications);
+
+      AppLogger().log(
+        'Notification added. New count AFTER: ${state.notifications.length}',
+      );
+      final hasNotification = state.notifications.any(
+        (n) => n.message == message,
+      );
+      AppLogger().log('Notification verified in state: $hasNotification');
+
+      Future.delayed(duration + const Duration(milliseconds: 500), () {
+        try {
+          AppLogger().log('Auto-removing notification: $message');
+          _removeNotification(notification);
+        } catch (e) {
+          AppLogger().error('Error removing notification', e);
+        }
+      });
+      AppLogger().log('=== NOTIFICATION SETUP COMPLETE ===');
+    } catch (e, stackTrace) {
+      AppLogger().error('Error showing notification', e, stackTrace);
+    }
+  }
+
+  /// Removes a notification
+  void _removeNotification(GameNotification notification) {
+    try {
+      AppLogger().log('Removing notification: ${notification.message}');
+      AppLogger().log(
+        'Current notifications count BEFORE removal: ${state.notifications.length}',
+      );
+      final updatedNotifications = List<GameNotification>.from(
+        state.notifications,
+      );
+      final removed = updatedNotifications.remove(notification);
+      AppLogger().log('Notification removed: $removed');
+      state = state.copyWith(notifications: updatedNotifications);
+      AppLogger().log(
+        'Current notifications count AFTER removal: ${state.notifications.length}',
+      );
+    } catch (e, stackTrace) {
+      AppLogger().error('Error removing notification', e, stackTrace);
+    }
+  }
+
+  // (Debug/test helpers removed)
+
+  /// Validates FEN format
+  bool _isValidFEN(String fen) {
+    try {
+      final parts = fen.split(' ');
+      if (parts.length < 2) return false;
+
+      final boardPart = parts[0];
+      final sidePart = parts[1];
+
+      // Check side to move
+      if (sidePart != 'w' && sidePart != 'b') return false;
+
+      // Check board format (simplified validation)
+      final ranks = boardPart.split('/');
+      if (ranks.length != 10) return false; // Xiangqi has 10 ranks
+
+      // Each rank should have valid piece notation and sum to 9 files
+      for (final rank in ranks) {
+        if (rank.isEmpty) return false;
+        // Allow digits 1-9 and project piece letters (both cases): r,h,e,a,k,c,p
+        if (!RegExp(r'^[1-9rheakcpRHEAKCP]+$').hasMatch(rank)) {
+          return false;
+        }
+        // Sum files
+        int width = 0;
+        for (int i = 0; i < rank.length; i++) {
+          final ch = rank[i];
+          final digit = int.tryParse(ch);
+          if (digit != null) {
+            width += digit;
+          } else {
+            width += 1;
+          }
+        }
+        if (width != 9) return false;
+      }
+
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   Future<void> switchEngine(String engineName) async {

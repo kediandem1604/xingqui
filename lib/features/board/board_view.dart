@@ -12,154 +12,169 @@ class BoardView extends ConsumerWidget {
     final state = ref.watch(boardControllerProvider);
     final controller = ref.read(boardControllerProvider.notifier);
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          // Engine status
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.grey[200],
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Engine: ${state.selectedEngine}'),
-                      if (state.engineError != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          state.engineError!,
-                          style: const TextStyle(
-                            color: Colors.red,
-                            fontSize: 12,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 2,
-                        ),
-                        if (state.enginePath != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            'Path: ' + state.enginePath!,
-                            style: const TextStyle(
-                              color: Colors.black54,
-                              fontSize: 11,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                          ),
-                        ],
-                      ],
-                    ],
-                  ),
+    return Stack(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              // Engine status
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                if (state.isEngineThinking)
-                  const Row(
-                    children: [
-                      SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      SizedBox(width: 8),
-                      Text('Thinking...'),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Board (maximize square size within available space)
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final size = constraints.biggest;
-                final dim = size.shortestSide; // use the limiting dimension
-                return Center(
-                  child: SizedBox(
-                    width: dim,
-                    height: dim,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.black, width: 2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          return Stack(
-                            children: [
-                              // SVG Board Background
-                              SvgPicture.asset(
-                                'assets/boards/xiangqi_gmchess_wood.svg',
-                                fit: BoxFit.fill,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Engine: ${state.selectedEngine}'),
+                          if (state.engineError != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              state.engineError!,
+                              style: const TextStyle(
+                                color: Colors.red,
+                                fontSize: 12,
                               ),
-                              // Best move arrows overlay should appear BELOW pieces
-                              _buildBestMoveArrows(state, constraints.biggest),
-                              // Pieces overlay
-                              _buildPiecesOverlay(state, constraints.biggest),
-                              // Move animation overlay
-                              _buildMoveAnimation(
-                                state,
-                                constraints.biggest,
-                                controller,
-                              ),
-                              // Gesture detector for tap handling
-                              GestureDetector(
-                                onTapDown: (details) => _onBoardTap(
-                                  context,
-                                  details,
-                                  state,
-                                  controller,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 2,
+                            ),
+                            if (state.enginePath != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                'Path: ' + state.enginePath!,
+                                style: const TextStyle(
+                                  color: Colors.black54,
+                                  fontSize: 11,
                                 ),
-                                child: Container(color: Colors.transparent),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
                               ),
                             ],
-                          );
-                        },
+                          ],
+                        ],
                       ),
                     ),
-                  ),
-                );
-              },
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Move history
-          Container(
-            height: 100,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Move History:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                    if (state.isEngineThinking)
+                      const Row(
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 8),
+                          Text('Thinking...'),
+                        ],
+                      ),
+                  ],
                 ),
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Text(
-                      state.moves.take(state.pointer).join(' '),
-                      style: const TextStyle(fontFamily: 'monospace'),
+              ),
+              const SizedBox(height: 16),
+
+              // Board (maximize square size within available space)
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final size = constraints.biggest;
+                    final dim = size.shortestSide; // use the limiting dimension
+                    return Center(
+                      child: SizedBox(
+                        width: dim,
+                        height: dim,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.black, width: 2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              return Stack(
+                                children: [
+                                  // SVG Board Background
+                                  SvgPicture.asset(
+                                    'assets/boards/xiangqi_gmchess_wood.svg',
+                                    fit: BoxFit.fill,
+                                  ),
+                                  // Best move arrows overlay should appear BELOW pieces
+                                  _buildBestMoveArrows(
+                                    state,
+                                    constraints.biggest,
+                                  ),
+                                  // Pieces overlay
+                                  _buildPiecesOverlay(
+                                    state,
+                                    constraints.biggest,
+                                  ),
+                                  // Move animation overlay
+                                  _buildMoveAnimation(
+                                    state,
+                                    constraints.biggest,
+                                    controller,
+                                  ),
+                                  // Gesture detector for tap handling
+                                  GestureDetector(
+                                    onTapDown: (details) => _onBoardTap(
+                                      context,
+                                      details,
+                                      state,
+                                      controller,
+                                    ),
+                                    child: Container(color: Colors.transparent),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Move history
+              Container(
+                height: 100,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Move History:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
                     ),
-                  ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Text(
+                          state.moves.take(state.pointer).join(' '),
+                          style: const TextStyle(fontFamily: 'monospace'),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        // Game notifications overlay
+        ...state.notifications.map(
+          (notification) =>
+              Positioned(top: 0, left: 0, right: 0, child: notification),
+        ),
+      ],
     );
   }
 
