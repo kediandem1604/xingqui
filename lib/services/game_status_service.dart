@@ -186,13 +186,30 @@ class GameStatusService {
   /// Gets the winner of the game
   static String? getWinner(String fen) {
     try {
+      // Check checkmate first
       if (isCheckmate(fen)) {
-        // The player who is NOT to move wins (opponent of current player)
         final sideToMove = FenParser.getSideToMove(fen);
         final isRedToMove = sideToMove == 'w';
         final winner = isRedToMove ? 'Black' : 'Red';
         AppLogger().log('Winner determined: $winner (checkmate)');
         return winner;
+      }
+
+      // If a king has been captured (non-standard flow), declare winner by presence
+      try {
+        final board = FenParser.parseBoard(fen);
+        final hasRedKing = _findKingPosition(board, 'K') != null;
+        final hasBlackKing = _findKingPosition(board, 'k') != null;
+        if (hasRedKing && !hasBlackKing) {
+          AppLogger().log('Winner determined: Red (black king missing)');
+          return 'Red';
+        }
+        if (!hasRedKing && hasBlackKing) {
+          AppLogger().log('Winner determined: Black (red king missing)');
+          return 'Black';
+        }
+      } catch (_) {
+        // ignore board parse issues here
       }
 
       if (isStalemate(fen)) {

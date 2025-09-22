@@ -639,22 +639,24 @@ class BoardController extends StateNotifier<BoardState> {
         );
       }
 
-      // Check for checkmate
+      // Check for checkmate or king captured (winner)
       AppLogger().log('Checking for checkmate...');
       final isCheckmate = GameStatusService.isCheckmate(fen);
       AppLogger().log('Is checkmate: $isCheckmate');
-      if (isCheckmate) {
-        final winner = GameStatusService.getWinner(fen);
-        AppLogger().log('Winner: $winner');
-        if (winner != null && winner != 'Draw') {
-          AppLogger().log('*** SHOWING CHECKMATE NOTIFICATION for $winner ***');
-          _showNotification(
-            '$winner WINS! Checkmate!',
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 5),
-          );
-        }
-        return; // Don't check stalemate if checkmate
+      final winner = GameStatusService.getWinner(fen);
+      AppLogger().log('Winner: $winner');
+      if (isCheckmate || (winner != null && winner != 'Draw')) {
+        final displayWinner =
+            winner ?? ((FenParser.getSideToMove(fen) == 'w') ? 'Black' : 'Red');
+        AppLogger().log(
+          '*** SHOWING GAME OVER NOTIFICATION for $displayWinner ***',
+        );
+        _showNotification(
+          '$displayWinner WINS! ${isCheckmate ? 'Checkmate' : 'King captured'}!',
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 5),
+        );
+        return; // Don't check stalemate if game is over
       }
 
       // Check for stalemate only if not in check and not checkmate
