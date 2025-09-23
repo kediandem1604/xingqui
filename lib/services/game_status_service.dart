@@ -1,3 +1,4 @@
+import 'dart:ui';
 import '../core/fen.dart';
 import '../core/xiangqi_rules.dart';
 import '../core/logger.dart';
@@ -131,31 +132,106 @@ class GameStatusService {
   /// Checks if the current player is in checkmate
   static bool isCheckmate(String fen) {
     try {
-      AppLogger().log('Checking for checkmate...');
+      AppLogger().log('=== CHECKMATE DETECTION START ===');
+      AppLogger().log('FEN: $fen');
 
-      // First check if in check
+      // First, the king must be in check for it to be checkmate
       if (!isInCheck(fen)) {
-        AppLogger().log('Not in check, cannot be checkmate');
+        AppLogger().log('Not in check, so not checkmate');
         return false;
       }
 
-      // Check if there are any legal moves that can escape check
-      final legalMoves = _getAllLegalMoves(fen);
-      AppLogger().log('Legal moves available: ${legalMoves.length}');
+      AppLogger().log('King is in check, checking if checkmate...');
 
-      // Test each legal move to see if it escapes check
-      for (final move in legalMoves) {
-        final newFen = FenParser.applyMove(fen, move);
-        if (!isInCheck(newFen)) {
-          AppLogger().log('Found escape move: $move');
-          return false; // Found a move that escapes check
+      final board = FenParser.parseBoard(fen);
+      final sideToMove = FenParser.getSideToMove(fen);
+      final isRedToMove = sideToMove == 'w';
+
+      // Find all pieces for the side to move
+      final pieces = <String, List<Offset>>{};
+      for (int rank = 0; rank < 10; rank++) {
+        for (int file = 0; file < 9; file++) {
+          final piece = board[rank][file];
+          if (piece.isNotEmpty) {
+            final isPieceRed = piece == piece.toUpperCase();
+            if ((isRedToMove && isPieceRed) || (!isRedToMove && !isPieceRed)) {
+              pieces
+                  .putIfAbsent(piece, () => <Offset>[])
+                  .add(Offset(file.toDouble(), rank.toDouble()));
+            }
+          }
         }
       }
 
-      AppLogger().log('Checkmate confirmed - no escape moves');
-      return true; // No moves can escape check
+      AppLogger().log(
+        'Found ${pieces.length} piece types for ${isRedToMove ? 'Red' : 'Black'}',
+      );
+
+      // Try all possible moves for all pieces
+      int totalMovesChecked = 0;
+      int legalEscapeMoves = 0;
+
+      for (final entry in pieces.entries) {
+        final pieceType = entry.key;
+        final positions = entry.value;
+
+        for (final pos in positions) {
+          final fromFile = pos.dx.toInt();
+          final fromRank = pos.dy.toInt();
+
+          AppLogger().log(
+            'Checking moves for $pieceType at ($fromFile, $fromRank)',
+          );
+
+          // Try all possible destination squares
+          for (int toRank = 0; toRank < 10; toRank++) {
+            for (int toFile = 0; toFile < 9; toFile++) {
+              if (toFile == fromFile && toRank == fromRank) continue;
+
+              final moveUci = _fileRankToUci(
+                fromFile,
+                fromRank,
+                toFile,
+                toRank,
+              );
+              totalMovesChecked++;
+
+              // Check if this is a legal move
+              if (XiangqiRules.isValidMove(fen, moveUci)) {
+                AppLogger().log('Found legal move: $moveUci');
+
+                // Apply the move and check if still in check
+                try {
+                  final newFen = FenParser.applyMove(fen, moveUci);
+                  final stillInCheck = isInCheck(newFen);
+
+                  if (!stillInCheck) {
+                    AppLogger().log(
+                      'Move $moveUci escapes check - NOT CHECKMATE',
+                    );
+                    legalEscapeMoves++;
+                    return false; // Found a move that escapes check
+                  } else {
+                    AppLogger().log('Move $moveUci still leaves king in check');
+                  }
+                } catch (e) {
+                  AppLogger().log('Error testing move $moveUci: $e');
+                }
+              }
+            }
+          }
+        }
+      }
+
+      AppLogger().log('=== CHECKMATE ANALYSIS COMPLETE ===');
+      AppLogger().log('Total moves checked: $totalMovesChecked');
+      AppLogger().log('Legal escape moves found: $legalEscapeMoves');
+      AppLogger().log('Result: CHECKMATE = ${legalEscapeMoves == 0}');
+
+      // If no legal move can escape check, it's checkmate
+      return legalEscapeMoves == 0;
     } catch (e, stackTrace) {
-      AppLogger().error('Error checking checkmate status', e, stackTrace);
+      AppLogger().error('Error in checkmate detection', e, stackTrace);
       return false;
     }
   }

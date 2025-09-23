@@ -61,6 +61,12 @@ class BoardState {
   final MoveAnimation? pendingAnimation;
   final List<GameNotification> notifications;
 
+  // Setup mode state
+  final bool isSetupMode;
+  final Map<String, int> setupPieces; // piece -> count available
+  final String? selectedSetupPiece;
+  final String? setupFen; // FEN position when starting from setup
+
   const BoardState({
     required this.fen,
     required this.moves,
@@ -79,6 +85,10 @@ class BoardState {
     this.possibleMoves = const [],
     this.pendingAnimation,
     this.notifications = const [],
+    this.isSetupMode = false,
+    this.setupPieces = const {},
+    this.selectedSetupPiece,
+    this.setupFen,
   });
 
   BoardState copyWith({
@@ -99,6 +109,10 @@ class BoardState {
     List<Offset>? possibleMoves,
     MoveAnimation? pendingAnimation,
     List<GameNotification>? notifications,
+    bool? isSetupMode,
+    Map<String, int>? setupPieces,
+    String? selectedSetupPiece,
+    String? setupFen,
     // explicit clear flags
     bool clearPendingAnimation = false,
     bool clearSelection = false,
@@ -122,6 +136,10 @@ class BoardState {
         ? null
         : (pendingAnimation ?? this.pendingAnimation),
     notifications: notifications ?? this.notifications,
+    isSetupMode: isSetupMode ?? this.isSetupMode,
+    setupPieces: setupPieces ?? this.setupPieces,
+    selectedSetupPiece: selectedSetupPiece ?? this.selectedSetupPiece,
+    setupFen: setupFen ?? this.setupFen,
   );
 
   static BoardState initial() => BoardState(
@@ -328,13 +346,84 @@ class BoardController extends StateNotifier<BoardState> {
 
   void _startThinkingWatchdog() {
     _thinkingWatchdog?.cancel();
-    _thinkingWatchdog = Timer(const Duration(seconds: 6), () {
-      // If still thinking after 3s, surface a helpful message
+    _thinkingWatchdog = Timer(const Duration(seconds: 3), () {
+      // If still thinking after 3s, check if game is over
       if (state.isEngineThinking) {
-        state = state.copyWith(
-          engineError:
-              'Engine took too long to respond. Check engine files/DLLs and permissions.',
-        );
+        AppLogger().log('Engine timeout - checking if game is over');
+
+        // Check game status before showing timeout error
+        final fenNow = state.fen;
+        final winner = GameStatusService.getWinner(fenNow);
+        final isMate = GameStatusService.isCheckmate(fenNow);
+        if (isMate || (winner != null && winner != 'Draw')) {
+          // Stop ongoing search without killing the engine process
+          try {
+            _engine?.send('stop');
+          } catch (_) {}
+
+          final resolvedWinner =
+              winner ??
+              ((FenParser.getSideToMove(fenNow) == 'w') ? 'Black' : 'Red');
+
+          AppLogger().log(
+            'Game is over: $resolvedWinner wins - stopping engine analysis',
+          );
+          state = state.copyWith(isEngineThinking: false, bestLines: []);
+          _showNotification(
+            isMate
+                ? '$resolvedWinner WINS! Checkmate!'
+                : '$resolvedWinner WINS! King captured!',
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 5),
+          );
+        } else {
+          // Not game over but engine is slow → stop current search and surface error
+          try {
+            _engine?.send('stop');
+          } catch (_) {}
+          state = state.copyWith(
+            isEngineThinking: false,
+            engineError:
+                'Engine took too long to respond. Check engine files/DLLs and permissions.',
+          );
+
+          // As a safety net, run a status check once more to surface any game-over
+          // notification that might have been missed due to timing.
+          try {
+            final forcedMate = GameStatusService.isCheckmate(fenNow);
+            final forcedWinner = GameStatusService.getWinner(fenNow);
+            if (forcedMate ||
+                (forcedWinner != null && forcedWinner != 'Draw')) {
+              final resolvedWinner =
+                  forcedWinner ??
+                  ((FenParser.getSideToMove(fenNow) == 'w') ? 'Black' : 'Red');
+              _showNotification(
+                forcedMate
+                    ? '$resolvedWinner WINS! Checkmate!'
+                    : '$resolvedWinner WINS! King captured!',
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 5),
+              );
+            } else {
+              // Heuristic fallback: if still in check and engine timed out,
+              // treat as checkmate to avoid hanging UX without resolution.
+              final stillInCheck = GameStatusService.isInCheck(fenNow);
+              if (stillInCheck) {
+                final resolvedWinner = (FenParser.getSideToMove(fenNow) == 'w')
+                    ? 'Black'
+                    : 'Red';
+                AppLogger().log(
+                  'Timeout while in check → declaring $resolvedWinner winner (fallback)',
+                );
+                _showNotification(
+                  '$resolvedWinner WINS! Checkmate!',
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 5),
+                );
+              }
+            }
+          } catch (_) {}
+        }
       }
     });
   }
@@ -464,12 +553,9 @@ class BoardController extends StateNotifier<BoardState> {
       state = state.copyWith(pendingAnimation: null);
     }
 
-    // Start analysis
-    await _analyzePosition(movetimeMs: 1000);
-
-    // FORCE CHECK GAME STATUS with explicit error handling
+    // ALWAYS check game status after applying a move
     try {
-      await AppLogger().log('=== FORCING GAME STATUS CHECK ===');
+      await AppLogger().log('=== CHECKING GAME STATUS AFTER MOVE ===');
       await _checkGameStatus();
       await AppLogger().log('=== GAME STATUS CHECK COMPLETED ===');
     } catch (e, stackTrace) {
@@ -484,6 +570,17 @@ class BoardController extends StateNotifier<BoardState> {
         backgroundColor: Colors.red,
       );
     }
+
+    // Only start analysis if game is not over
+    final winner = GameStatusService.getWinner(state.fen);
+    final isCheckmate = GameStatusService.isCheckmate(state.fen);
+
+    if (!isCheckmate && (winner == null || winner == 'Draw')) {
+      // Game is still ongoing, start analysis
+      await _analyzePosition(movetimeMs: 1000);
+    } else {
+      AppLogger().log('Game is over - skipping engine analysis');
+    }
   }
 
   Future<void> back() async {
@@ -492,7 +589,8 @@ class BoardController extends StateNotifier<BoardState> {
     final newPointer = state.pointer - 1;
 
     // Reconstruct FEN from move history up to the new pointer
-    String newFen = defaultXqFen;
+    String newFen =
+        state.setupFen ?? defaultXqFen; // Use setup FEN if available
     bool newRedToMove = true;
 
     for (int i = 0; i < newPointer; i++) {
@@ -528,7 +626,8 @@ class BoardController extends StateNotifier<BoardState> {
     final newPointer = state.pointer + 1;
 
     // Reconstruct FEN from move history up to the new pointer
-    String newFen = defaultXqFen;
+    String newFen =
+        state.setupFen ?? defaultXqFen; // Use setup FEN if available
     bool newRedToMove = true;
 
     for (int i = 0; i < newPointer; i++) {
@@ -617,11 +716,49 @@ class BoardController extends StateNotifier<BoardState> {
       final fen = state.fen;
       AppLogger().log('Current FEN: $fen');
 
-      // Check for check FIRST with enhanced logging
+      // Check for check FIRST
       AppLogger().log('Checking for check...');
       final isInCheck = GameStatusService.isInCheck(fen);
       AppLogger().log('Is in check: $isInCheck');
 
+      // Check for checkmate BEFORE checking for winner
+      AppLogger().log('Checking for checkmate...');
+      final isCheckmate = GameStatusService.isCheckmate(fen);
+      AppLogger().log('Is checkmate: $isCheckmate');
+
+      // Check for king captured (winner)
+      final winner = GameStatusService.getWinner(fen);
+      AppLogger().log('Winner: $winner');
+
+      // Handle checkmate (highest priority)
+      if (isCheckmate) {
+        final sideToMove = FenParser.getSideToMove(fen);
+        final winningPlayer = sideToMove == 'w' ? 'Black' : 'Red';
+        AppLogger().log(
+          '*** SHOWING CHECKMATE NOTIFICATION for $winningPlayer ***',
+        );
+        _showNotification(
+          '$winningPlayer WINS! Checkmate!',
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 5),
+        );
+        return; // Don't check other conditions if checkmate
+      }
+
+      // Handle king captured (if not checkmate)
+      if (winner != null && winner != 'Draw') {
+        AppLogger().log(
+          '*** SHOWING KING CAPTURED NOTIFICATION for $winner ***',
+        );
+        _showNotification(
+          '$winner WINS! King captured!',
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 5),
+        );
+        return; // Don't check other conditions if game is over
+      }
+
+      // Handle check (only if not checkmate or game over)
       if (isInCheck) {
         final sideToMove = FenParser.getSideToMove(fen);
         final currentPlayer = sideToMove == 'w' ? 'Red' : 'Black';
@@ -633,34 +770,8 @@ class BoardController extends StateNotifier<BoardState> {
           backgroundColor: Colors.orange,
           duration: const Duration(seconds: 4),
         );
-        AppLogger().log('Check notification added to state');
-        AppLogger().log(
-          'Current notifications count: ${state.notifications.length}',
-        );
-      }
-
-      // Check for checkmate or king captured (winner)
-      AppLogger().log('Checking for checkmate...');
-      final isCheckmate = GameStatusService.isCheckmate(fen);
-      AppLogger().log('Is checkmate: $isCheckmate');
-      final winner = GameStatusService.getWinner(fen);
-      AppLogger().log('Winner: $winner');
-      if (isCheckmate || (winner != null && winner != 'Draw')) {
-        final displayWinner =
-            winner ?? ((FenParser.getSideToMove(fen) == 'w') ? 'Black' : 'Red');
-        AppLogger().log(
-          '*** SHOWING GAME OVER NOTIFICATION for $displayWinner ***',
-        );
-        _showNotification(
-          '$displayWinner WINS! ${isCheckmate ? 'Checkmate' : 'King captured'}!',
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 5),
-        );
-        return; // Don't check stalemate if game is over
-      }
-
-      // Check for stalemate only if not in check and not checkmate
-      if (!isInCheck) {
+      } else {
+        // Check for stalemate only if not in check and game is not over
         AppLogger().log('Checking for stalemate...');
         final isStalemate = GameStatusService.isStalemate(fen);
         AppLogger().log('Is stalemate: $isStalemate');
@@ -1099,6 +1210,14 @@ class BoardController extends StateNotifier<BoardState> {
   Future<void> _analyzePosition({int? movetimeMs}) async {
     if (_engine == null) return;
 
+    // Check game status first - if game is over, don't analyze
+    final winner = GameStatusService.getWinner(state.fen);
+    if (winner != null && winner != 'Draw') {
+      AppLogger().log('Game is over: $winner wins - skipping engine analysis');
+      state = state.copyWith(bestLines: [], isEngineThinking: false);
+      return;
+    }
+
     // Clear previous best lines when starting a fresh analysis
     state = state.copyWith(bestLines: [], isEngineThinking: true);
     _startThinkingWatchdog();
@@ -1195,6 +1314,159 @@ class BoardController extends StateNotifier<BoardState> {
     final fromSquare = '${String.fromCharCode(97 + fromFile)}${9 - fromRank}';
     final toSquare = '${String.fromCharCode(97 + toFile)}${9 - toRank}';
     return '$fromSquare$toSquare';
+  }
+
+  // Setup mode methods
+  void enterSetupMode() {
+    AppLogger().log('Entering setup mode');
+
+    // Initialize setup pieces (standard Xiangqi set)
+    final setupPieces = <String, int>{
+      'R': 2, 'H': 2, 'E': 2, 'A': 2, 'K': 1, 'C': 2, 'P': 5, // Red pieces
+      'r': 2, 'h': 2, 'e': 2, 'a': 2, 'k': 1, 'c': 2, 'p': 5, // Black pieces
+    };
+
+    state = state.copyWith(
+      isSetupMode: true,
+      setupPieces: setupPieces,
+      selectedSetupPiece: null,
+      fen: '9/9/9/9/9/9/9/9/9/9 w', // Empty board
+      moves: const [], // Clear moves history when entering setup
+      pointer: 0,
+      redToMove: true,
+      bestLines: const [], // Clear previous analysis arrows
+      clearSelection: true,
+    );
+  }
+
+  void exitSetupMode() {
+    AppLogger().log('Exiting setup mode');
+    state = state.copyWith(
+      isSetupMode: false,
+      setupPieces: const {},
+      selectedSetupPiece: null,
+      clearSelection: true,
+    );
+  }
+
+  void resetFromSetup() {
+    AppLogger().log('Resetting from setup - clearing all history');
+    state = state.copyWith(
+      isSetupMode: false,
+      setupPieces: const {},
+      selectedSetupPiece: null,
+      moves: const [],
+      pointer: 0,
+      bestLines: const [],
+      clearSelection: true,
+    );
+  }
+
+  void selectSetupPiece(String piece) {
+    if (state.setupPieces[piece] != null && state.setupPieces[piece]! > 0) {
+      AppLogger().log('Selected setup piece: $piece');
+      state = state.copyWith(selectedSetupPiece: piece);
+    }
+  }
+
+  void placePieceOnBoard(int file, int rank) {
+    if (!state.isSetupMode || state.selectedSetupPiece == null) return;
+
+    final piece = state.selectedSetupPiece!;
+    final currentFen = state.fen;
+    final board = FenParser.parseBoard(currentFen);
+
+    // Check if square is empty
+    if (board[rank][file].isNotEmpty) {
+      AppLogger().log('Square ($file, $rank) is not empty');
+      return;
+    }
+
+    // Place piece on board
+    board[rank][file] = piece;
+    final newFen = FenParser.boardToFen(board, state.redToMove ? 'w' : 'b');
+
+    // Update setup pieces count
+    final newSetupPieces = Map<String, int>.from(state.setupPieces);
+    newSetupPieces[piece] = (newSetupPieces[piece] ?? 0) - 1;
+
+    AppLogger().log('Placed $piece at ($file, $rank)');
+    state = state.copyWith(
+      fen: newFen,
+      setupPieces: newSetupPieces,
+      selectedSetupPiece: newSetupPieces[piece] == 0
+          ? null
+          : state.selectedSetupPiece,
+    );
+  }
+
+  void removePieceFromBoard(int file, int rank) {
+    if (!state.isSetupMode) return;
+
+    final currentFen = state.fen;
+    final board = FenParser.parseBoard(currentFen);
+    final piece = board[rank][file];
+
+    if (piece.isEmpty) return;
+
+    // Remove piece from board
+    board[rank][file] = '';
+    final newFen = FenParser.boardToFen(board, state.redToMove ? 'w' : 'b');
+
+    // Return piece to setup pieces
+    final newSetupPieces = Map<String, int>.from(state.setupPieces);
+    newSetupPieces[piece] = (newSetupPieces[piece] ?? 0) + 1;
+
+    AppLogger().log('Removed $piece from ($file, $rank)');
+    state = state.copyWith(fen: newFen, setupPieces: newSetupPieces);
+  }
+
+  void startGameFromSetup() {
+    if (!state.isSetupMode) return;
+
+    AppLogger().log('Starting game from setup position');
+
+    // Validate setup (must have exactly one king of each color)
+    final board = FenParser.parseBoard(state.fen);
+    int redKings = 0, blackKings = 0;
+
+    for (int rank = 0; rank < 10; rank++) {
+      for (int file = 0; file < 9; file++) {
+        final piece = board[rank][file];
+        if (piece == 'K') redKings++;
+        if (piece == 'k') blackKings++;
+      }
+    }
+
+    if (redKings != 1 || blackKings != 1) {
+      _showNotification(
+        'Invalid setup: Must have exactly one king of each color',
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
+      );
+      return;
+    }
+
+    // Exit setup mode and start game
+    state = state.copyWith(
+      isSetupMode: false,
+      setupPieces: const {},
+      selectedSetupPiece: null,
+      moves: const [], // Start fresh moves history from setup position
+      pointer: 0,
+      setupFen: state.fen, // Save setup FEN as starting position
+      bestLines: const [], // Clear any previous analysis arrows
+      clearSelection: true,
+    );
+
+    // Trigger engine analysis for the new position
+    _analyzePosition();
+
+    _showNotification(
+      'Game started from setup position',
+      backgroundColor: Colors.green,
+      duration: const Duration(seconds: 2),
+    );
   }
 
   @override

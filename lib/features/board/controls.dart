@@ -119,7 +119,30 @@ class Controls extends ConsumerWidget {
 
           const SizedBox(height: 16),
 
-          // Board recognition UI removed
+          // Setup mode controls
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton(
+                onPressed: state.isSetupMode
+                    ? null
+                    : () => controller.enterSetupMode(),
+                child: const Text('Setup Board'),
+              ),
+              if (state.isSetupMode) ...[
+                ElevatedButton(
+                  onPressed: () => controller.startGameFromSetup(),
+                  child: const Text('Start Game'),
+                ),
+                ElevatedButton(
+                  onPressed: () => controller.exitSetupMode(),
+                  child: const Text('Exit Setup'),
+                ),
+              ],
+            ],
+          ),
+
+          const SizedBox(height: 16),
 
           // Game info
           Container(

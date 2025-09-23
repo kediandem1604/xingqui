@@ -58,9 +58,9 @@ class UcciEngine implements IEngine {
       _proc!.stdin.writeln('isready');
       await _waitFor('readyok', timeout: const Duration(seconds: 10));
 
-      print('UCCI Engine started successfully');
+      // Engine started successfully
     } catch (e) {
-      print('Failed to start UCCI engine: $e');
+      // Engine start failed
       rethrow;
     }
   }
@@ -129,7 +129,7 @@ class UcciEngine implements IEngine {
     try {
       await _waitFor('readyok', timeout: const Duration(seconds: 2));
     } catch (e) {
-      print('MultiPV may not be supported by this UCCI engine');
+      // MultiPV may not be supported by this UCCI engine
     }
   }
 

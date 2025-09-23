@@ -77,66 +77,74 @@ class BoardView extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
 
-              // Board (maximize square size within available space)
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final size = constraints.biggest;
-                    final dim = size.shortestSide; // use the limiting dimension
-                    return Center(
-                      child: SizedBox(
-                        width: dim,
-                        height: dim,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.black, width: 2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              return Stack(
-                                children: [
-                                  // SVG Board Background
-                                  SvgPicture.asset(
-                                    'assets/boards/xiangqi_gmchess_wood.svg',
-                                    fit: BoxFit.fill,
-                                  ),
-                                  // Best move arrows overlay should appear BELOW pieces
-                                  _buildBestMoveArrows(
-                                    state,
-                                    constraints.biggest,
-                                  ),
-                                  // Pieces overlay
-                                  _buildPiecesOverlay(
-                                    state,
-                                    constraints.biggest,
-                                  ),
-                                  // Move animation overlay
-                                  _buildMoveAnimation(
-                                    state,
-                                    constraints.biggest,
-                                    controller,
-                                  ),
-                                  // Gesture detector for tap handling
-                                  GestureDetector(
-                                    onTapDown: (details) => _onBoardTap(
-                                      context,
-                                      details,
+              // Setup mode UI or Board
+              if (state.isSetupMode) ...[
+                _buildSetupModeUI(state, controller),
+              ] else ...[
+                // Board (maximize square size within available space)
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final size = constraints.biggest;
+                      final dim =
+                          size.shortestSide; // use the limiting dimension
+                      return Center(
+                        child: SizedBox(
+                          width: dim,
+                          height: dim,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.black, width: 2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                return Stack(
+                                  children: [
+                                    // SVG Board Background
+                                    SvgPicture.asset(
+                                      'assets/boards/xiangqi_gmchess_wood.svg',
+                                      fit: BoxFit.fill,
+                                    ),
+                                    // Best move arrows overlay should appear BELOW pieces
+                                    _buildBestMoveArrows(
                                       state,
+                                      constraints.biggest,
+                                    ),
+                                    // Pieces overlay
+                                    _buildPiecesOverlay(
+                                      state,
+                                      constraints.biggest,
+                                    ),
+                                    // Move animation overlay
+                                    _buildMoveAnimation(
+                                      state,
+                                      constraints.biggest,
                                       controller,
                                     ),
-                                    child: Container(color: Colors.transparent),
-                                  ),
-                                ],
-                              );
-                            },
+                                    // Gesture detector for tap handling
+                                    GestureDetector(
+                                      onTapDown: (details) => _onBoardTap(
+                                        context,
+                                        details,
+                                        state,
+                                        controller,
+                                      ),
+                                      child: Container(
+                                        color: Colors.transparent,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
-              ),
+              ],
 
               const SizedBox(height: 16),
 
@@ -425,6 +433,9 @@ class BoardView extends ConsumerWidget {
     BoardState state,
     BoardController controller,
   ) {
+    // Don't handle normal moves in setup mode
+    if (state.isSetupMode) return;
+
     // Convert tap position to board coordinates using same metrics
     final RenderBox renderBox = context.findRenderObject() as RenderBox;
     final localPosition = renderBox.globalToLocal(details.globalPosition);
@@ -631,5 +642,248 @@ class _ArrowsPainter extends CustomPainter {
         oldDelegate.cellHeight != cellHeight ||
         oldDelegate.offsetX != offsetX ||
         oldDelegate.offsetY != offsetY;
+  }
+}
+
+// Setup mode UI
+Widget _buildSetupModeUI(BoardState state, BoardController controller) {
+  return Expanded(
+    child: Column(
+      children: [
+        // Setup controls
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.blue[50],
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Setup Mode',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  Row(
+                    children: [
+                      ElevatedButton(
+                        onPressed: controller.startGameFromSetup,
+                        child: const Text('Start Game'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: controller.exitSetupMode,
+                        child: const Text('Exit Setup'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // Piece selection
+              _buildPieceSelection(state, controller),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Setup board
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final size = constraints.biggest;
+              final dim = size.shortestSide;
+              return Center(
+                child: SizedBox(
+                  width: dim,
+                  height: dim,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black, width: 2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return Stack(
+                          children: [
+                            // SVG Board Background
+                            SvgPicture.asset(
+                              'assets/boards/xiangqi_gmchess_wood.svg',
+                              fit: BoxFit.fill,
+                            ),
+                            // Setup pieces overlay
+                            _buildSetupPiecesOverlay(
+                              state,
+                              constraints.biggest,
+                            ),
+                            // Gesture detector for setup
+                            GestureDetector(
+                              onTapDown: (details) => _onSetupBoardTap(
+                                context,
+                                details,
+                                state,
+                                controller,
+                              ),
+                              child: Container(color: Colors.transparent),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _buildPieceSelection(BoardState state, BoardController controller) {
+  return Wrap(
+    spacing: 8,
+    runSpacing: 8,
+    children: state.setupPieces.entries.where((entry) => entry.value > 0).map((
+      entry,
+    ) {
+      final piece = entry.key;
+      final count = entry.value;
+      final isSelected = state.selectedSetupPiece == piece;
+
+      return GestureDetector(
+        onTap: () => controller.selectSetupPiece(piece),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.blue : Colors.grey[200],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected ? Colors.blue : Colors.grey,
+              width: 2,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                piece,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: isSelected ? Colors.white : Colors.black,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '($count)',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isSelected ? Colors.white : Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }).toList(),
+  );
+}
+
+Widget _buildSetupPiecesOverlay(BoardState state, Size boardSize) {
+  final cellWidth = boardSize.width / 9;
+  final cellHeight = boardSize.height / 10;
+
+  return CustomPaint(
+    size: boardSize,
+    painter: _SetupPiecesPainter(
+      fen: state.fen,
+      cellWidth: cellWidth,
+      cellHeight: cellHeight,
+    ),
+  );
+}
+
+void _onSetupBoardTap(
+  BuildContext context,
+  TapDownDetails details,
+  BoardState state,
+  BoardController controller,
+) {
+  if (!state.isSetupMode) return;
+
+  final RenderBox renderBox = context.findRenderObject() as RenderBox;
+  final localPosition = renderBox.globalToLocal(details.globalPosition);
+
+  final cellWidth = renderBox.size.width / 9;
+  final cellHeight = renderBox.size.height / 10;
+
+  final file = (localPosition.dx / cellWidth).floor().clamp(0, 8);
+  final rank = (localPosition.dy / cellHeight).floor().clamp(0, 9);
+
+  if (state.selectedSetupPiece != null) {
+    controller.placePieceOnBoard(file, rank);
+  } else {
+    // If no piece selected, try to remove piece
+    controller.removePieceFromBoard(file, rank);
+  }
+}
+
+class _SetupPiecesPainter extends CustomPainter {
+  final String fen;
+  final double cellWidth;
+  final double cellHeight;
+
+  _SetupPiecesPainter({
+    required this.fen,
+    required this.cellWidth,
+    required this.cellHeight,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final board = FenParser.parseBoard(fen);
+
+    for (int rank = 0; rank < 10; rank++) {
+      for (int file = 0; file < 9; file++) {
+        final piece = board[rank][file];
+        if (piece.isNotEmpty) {
+          final x = file * cellWidth + cellWidth / 2;
+          final y = rank * cellHeight + cellHeight / 2;
+
+          final paint = Paint()
+            ..color = piece == piece.toUpperCase() ? Colors.red : Colors.black
+            ..style = PaintingStyle.fill;
+
+          canvas.drawCircle(Offset(x, y), cellWidth * 0.3, paint);
+
+          final textPainter = TextPainter(
+            text: TextSpan(
+              text: piece,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: cellWidth * 0.4,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+          );
+          textPainter.layout();
+          textPainter.paint(
+            canvas,
+            Offset(x - textPainter.width / 2, y - textPainter.height / 2),
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SetupPiecesPainter oldDelegate) {
+    return oldDelegate.fen != fen ||
+        oldDelegate.cellWidth != cellWidth ||
+        oldDelegate.cellHeight != cellHeight;
   }
 }

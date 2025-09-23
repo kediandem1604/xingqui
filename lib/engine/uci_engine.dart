@@ -69,9 +69,9 @@ class UciEngine implements IEngine {
       _proc!.stdin.writeln('isready');
       await _waitFor('readyok', timeout: const Duration(seconds: 10));
 
-      print('UCI Engine started successfully');
+      // Engine started successfully
     } catch (e) {
-      print('Failed to start UCI engine: $e');
+      // Engine start failed
       rethrow;
     }
   }

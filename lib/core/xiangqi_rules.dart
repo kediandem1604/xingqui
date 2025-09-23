@@ -206,10 +206,7 @@ class XiangqiRules {
     final toPiece = board[move.toRank][move.toFile];
     final isCapture = toPiece.isNotEmpty;
 
-    // Debug logging for cannon moves
-    print(
-      'Cannon move: ${move.fromFile}${move.fromRank} -> ${move.toFile}${move.toRank}, capture: $isCapture',
-    );
+    // Debug logging removed
 
     if (move.fromFile == move.toFile) {
       // Vertical move
@@ -224,10 +221,8 @@ class XiangqiRules {
       }
 
       if (isCapture) {
-        print('Cannon vertical capture: pieceCount=$pieceCount');
         return pieceCount == 1; // Must jump over exactly one piece
       } else {
-        print('Cannon vertical move: pieceCount=$pieceCount');
         return pieceCount == 0; // Path must be clear
       }
     } else {
@@ -243,10 +238,8 @@ class XiangqiRules {
       }
 
       if (isCapture) {
-        print('Cannon horizontal capture: pieceCount=$pieceCount');
         return pieceCount == 1; // Must jump over exactly one piece
       } else {
-        print('Cannon horizontal move: pieceCount=$pieceCount');
         return pieceCount == 0; // Path must be clear
       }
     }
@@ -263,10 +256,7 @@ class XiangqiRules {
     final piece = board[move.fromRank][move.fromFile];
     final isRedPawn = piece == piece.toUpperCase(); // Red pieces are uppercase
 
-    print(
-      'Pawn move: ${move.fromFile}${move.fromRank} -> ${move.toFile}${move.toRank}',
-    );
-    print('isRedPawn: $isRedPawn, piece: $piece');
+    // Debug logging removed
 
     if (isRedPawn) {
       // Red pawn moves UP (decreasing rank numbers)
@@ -274,9 +264,7 @@ class XiangqiRules {
       // After crossing river (rank <= 4): can move forward OR sideways
 
       final hasCrossedRiver = move.fromRank <= 4; // Red pawn crossed river
-      print(
-        'Red pawn - fromRank: ${move.fromRank}, hasCrossedRiver: $hasCrossedRiver',
-      );
+      // Debug logging removed
 
       if (hasCrossedRiver) {
         // After crossing river: can move forward (UP) OR sideways
@@ -301,9 +289,7 @@ class XiangqiRules {
       // After crossing river (rank >= 5): can move forward OR sideways
 
       final hasCrossedRiver = move.fromRank >= 5; // Black pawn crossed river
-      print(
-        'Black pawn - fromRank: ${move.fromRank}, hasCrossedRiver: $hasCrossedRiver',
-      );
+      // Debug logging removed
 
       if (hasCrossedRiver) {
         // After crossing river: can move forward (DOWN) OR sideways
