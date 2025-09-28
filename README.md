@@ -22,7 +22,7 @@ lib/
 │   └── xiangqi_rules.dart   # Luật cờ tướng (Phase 1)
 ├── engine/                   # Engine integration
 │   ├── engine_base.dart     # Abstract engine interface
-│   ├── uci_engine.dart      # Pikafish (UCI protocol)
+│   ├── pikafish_engine.dart # Pikafish (UCI protocol)
 │   ├── ucci_engine.dart     # EleEye (UCCI protocol)
 │   └── engine_parser.dart   # Parse engine output
 └── features/board/           # UI components

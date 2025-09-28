@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../engine/engine_base.dart';
 import '../../engine/engine_parser.dart';
-import '../../engine/uci_engine.dart';
 import '../../engine/ucci_engine.dart';
+import '../../engine/pikafish_engine.dart';
 import '../../core/fen.dart';
 import '../../core/xiangqi_rules.dart';
 import '../../core/logger.dart';
@@ -219,14 +219,17 @@ class BoardController extends StateNotifier<BoardState> {
       await AppLogger().log('Creating new engine: $engineName');
       switch (engineName) {
         case 'Pikafish':
-          final path = _resolveEnginePath('engines/pikafish/win/pikafish.exe');
-          await AppLogger().log('Pikafish path resolved: $path');
-          if (!File(path).existsSync()) {
-            await AppLogger().error('Pikafish not found', path);
-            throw Exception('Pikafish executable not found at: ' + path);
+          // Use Pikafish directly with custom UCI->UCCI conversion
+          final pikafishPath = _resolveEnginePath(
+            'engines/pikafish/win/pikafish.exe',
+          );
+          await AppLogger().log('pikafish engine path resolved: $pikafishPath');
+          if (!File(pikafishPath).existsSync()) {
+            await AppLogger().error('pikafish engine not found', pikafishPath);
+            throw Exception('pikafish engine not found at: ' + pikafishPath);
           }
-          _engine = UciEngine(path);
-          await AppLogger().log('UciEngine created for Pikafish');
+          _engine = PikafishEngine(pikafishPath);
+          await AppLogger().log('PikafishEngine created');
           break;
         case 'EleEye':
           // Prefer the freshly built eleeye_new.exe if present
@@ -271,19 +274,7 @@ class BoardController extends StateNotifier<BoardState> {
       state = state.copyWith(
         selectedEngine: engineName,
         engineError: null,
-        enginePath: (_engine is UciEngine || _engine is UcciEngine)
-            ? (engineName == 'Pikafish'
-                  ? _resolveEnginePath('engines/pikafish/win/pikafish.exe')
-                  : (File(
-                          _resolveEnginePath(
-                            'engines/eleeye/win/eleeye_new.exe',
-                          ),
-                        ).existsSync()
-                        ? _resolveEnginePath(
-                            'engines/eleeye/win/eleeye_new.exe',
-                          )
-                        : _resolveEnginePath('engines/eleeye/win/eleeye.exe')))
-            : null,
+        enginePath: _getEnginePath(engineName),
       );
 
       // Initialize game
@@ -300,6 +291,24 @@ class BoardController extends StateNotifier<BoardState> {
         engineError: e.toString(),
       );
       rethrow;
+    }
+  }
+
+  // Get the correct engine path based on engine name
+  String _getEnginePath(String engineName) {
+    switch (engineName) {
+      case 'Pikafish':
+        return _resolveEnginePath('engines/pikafish/win/pikafish.exe');
+      case 'EleEye':
+        final preferredPath = _resolveEnginePath(
+          'engines/eleeye/win/eleeye_new.exe',
+        );
+        final fallbackPath = _resolveEnginePath(
+          'engines/eleeye/win/eleeye.exe',
+        );
+        return File(preferredPath).existsSync() ? preferredPath : fallbackPath;
+      default:
+        return '';
     }
   }
 
@@ -346,10 +355,17 @@ class BoardController extends StateNotifier<BoardState> {
 
   void _startThinkingWatchdog() {
     _thinkingWatchdog?.cancel();
-    _thinkingWatchdog = Timer(const Duration(seconds: 3), () {
-      // If still thinking after 3s, check if game is over
+    // Increase timeout for Pikafish engine to allow deep thinking
+    final timeoutDuration = state.selectedEngine == 'Pikafish'
+        ? const Duration(seconds: 15) // Much longer for Pikafish
+        : const Duration(seconds: 3);
+
+    _thinkingWatchdog = Timer(timeoutDuration, () {
+      // If still thinking after timeout, check if game is over
       if (state.isEngineThinking) {
-        AppLogger().log('Engine timeout - checking if game is over');
+        AppLogger().log(
+          'Engine timeout (${timeoutDuration.inSeconds}s) - checking if game is over',
+        );
 
         // Check game status before showing timeout error
         final fenNow = state.fen;
@@ -381,10 +397,14 @@ class BoardController extends StateNotifier<BoardState> {
           try {
             _engine?.send('stop');
           } catch (_) {}
+
+          final errorMessage = state.selectedEngine == 'Pikafish'
+              ? 'Pikafish is a Chess engine, not Xiangqi. Please use EleEye engine for Xiangqi analysis.'
+              : 'Engine took too long to respond. Check engine files/DLLs and permissions.';
+
           state = state.copyWith(
             isEngineThinking: false,
-            engineError:
-                'Engine took too long to respond. Check engine files/DLLs and permissions.',
+            engineError: errorMessage,
           );
 
           // As a safety net, run a status check once more to surface any game-over
@@ -435,8 +455,8 @@ class BoardController extends StateNotifier<BoardState> {
       if (pv != null) {
         final list = [...state.bestLines];
 
-        // Replace or insert based on multipv index
-        final idx = _eleEyeBanMode ? (_banIteration + 1) : pv.multipv;
+        // Handle MultiPV differently for different engines
+        final idx = _getMultiPvIndex(pv.multipv);
         final bl = BestLine(idx, pv.depth, pv.scoreCp, pv.pvMoves);
 
         final existingIndex = list.indexWhere((e) => e.index == idx);
@@ -461,6 +481,17 @@ class BoardController extends StateNotifier<BoardState> {
     } else if (message is ErrorMessage) {
       AppLogger().error('Engine error', message.raw);
       state = state.copyWith(engineError: message.raw);
+    }
+  }
+
+  // Get the correct MultiPV index based on engine type
+  int _getMultiPvIndex(int pvMultipv) {
+    if (_eleEyeBanMode) {
+      // EleEye banmoves mode: use iteration-based index
+      return _banIteration + 1;
+    } else {
+      // Pikafish and other engines: use the multipv from engine output
+      return pvMultipv;
     }
   }
 
@@ -1206,7 +1237,7 @@ class BoardController extends StateNotifier<BoardState> {
     }
   }
 
-  // Analyze current position, supporting EleEye's lack of native MultiPV
+  // Analyze current position with engine-specific MultiPV handling
   Future<void> _analyzePosition({int? movetimeMs}) async {
     if (_engine == null) return;
 
@@ -1225,58 +1256,79 @@ class BoardController extends StateNotifier<BoardState> {
     try {
       final isEleEye =
           state.selectedEngine == 'EleEye' && _engine!.protocol == 'UCCI';
+      final isPikafish = state.selectedEngine == 'Pikafish';
 
-      if (!isEleEye || state.multiPv <= 1) {
-        // Standard path: ask engine once with requested MultiPV
+      if (isEleEye && state.multiPv > 1) {
+        // EleEye path: emulate MultiPV using iterative banmoves
+        await _analyzePositionEleEye(movetimeMs);
+      } else if (isPikafish && state.multiPv > 1) {
+        // Pikafish path: native MultiPV support (only when MultiPV > 1)
+        await _analyzePositionPikafish(movetimeMs);
+      } else if (isPikafish) {
+        // Pikafish single PV: use depth instead of movetime for better analysis
+        await _engine!.setPosition(state.fen, currentMoves());
+        await _engine!.go(depth: 15); // Use depth 15 for deep analysis
+      } else {
+        // Standard path: single PV or other engines
         await _engine!.setPosition(state.fen, currentMoves());
         await _engine!.go(movetimeMs: movetimeMs ?? 1000);
-        return;
       }
-
-      // EleEye path: emulate MultiPV using iterative banmoves
-      _eleEyeBanMode = true;
-      _bannedFirstMoves.clear();
-
-      for (_banIteration = 0; _banIteration < state.multiPv; _banIteration++) {
-        // Reposition resets previous ban list inside engine
-        await _engine!.setPosition(state.fen, currentMoves());
-
-        if (_bannedFirstMoves.isNotEmpty) {
-          // Example: "banmoves b2b9 h2h9"
-          final cmd = 'banmoves ' + _bannedFirstMoves.join(' ');
-          _engine!.send(cmd);
-        }
-
-        // Wait for a single bestmove to mark the end of this cycle
-        _bestMoveOnce = Completer<void>();
-        await _engine!.go(movetimeMs: movetimeMs ?? 1000);
-        try {
-          await _bestMoveOnce!.future.timeout(const Duration(seconds: 5));
-        } catch (_) {
-          // If EleEye fails to reply, break the loop
-          break;
-        }
-
-        // Capture first move of just-finished PV index
-        final idx = _banIteration + 1;
-        final bl = state.bestLines.firstWhere(
-          (e) => e.index == idx,
-          orElse: () => const BestLine(0, 0, 0, []),
-        );
-        if (bl.firstMove.isNotEmpty) {
-          _bannedFirstMoves.add(bl.firstMove);
-        } else {
-          break; // no move parsed; stop early
-        }
-      }
-
-      // Restore flags
-      _eleEyeBanMode = false;
     } catch (e) {
       // Ensure clear thinking state if there's an error
       state = state.copyWith(isEngineThinking: false);
       rethrow;
     }
+  }
+
+  // EleEye-specific MultiPV analysis using banmoves
+  Future<void> _analyzePositionEleEye(int? movetimeMs) async {
+    _eleEyeBanMode = true;
+    _bannedFirstMoves.clear();
+
+    for (_banIteration = 0; _banIteration < state.multiPv; _banIteration++) {
+      // Reposition resets previous ban list inside engine
+      await _engine!.setPosition(state.fen, currentMoves());
+
+      if (_bannedFirstMoves.isNotEmpty) {
+        // Example: "banmoves b2b9 h2h9"
+        final cmd = 'banmoves ' + _bannedFirstMoves.join(' ');
+        _engine!.send(cmd);
+      }
+
+      // Wait for a single bestmove to mark the end of this cycle
+      _bestMoveOnce = Completer<void>();
+      await _engine!.go(movetimeMs: movetimeMs ?? 1000);
+      try {
+        await _bestMoveOnce!.future.timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // If EleEye fails to reply, break the loop
+        break;
+      }
+
+      // Capture first move of just-finished PV index
+      final idx = _banIteration + 1;
+      final bl = state.bestLines.firstWhere(
+        (e) => e.index == idx,
+        orElse: () => const BestLine(0, 0, 0, []),
+      );
+      if (bl.firstMove.isNotEmpty) {
+        _bannedFirstMoves.add(bl.firstMove);
+      } else {
+        break; // no move parsed; stop early
+      }
+    }
+
+    // Restore flags
+    _eleEyeBanMode = false;
+  }
+
+  // Pikafish-specific MultiPV analysis using native MultiPV
+  Future<void> _analyzePositionPikafish(int? movetimeMs) async {
+    // Pikafish supports native MultiPV, so just set position and go
+    // MultiPV is already set via setMultiPV() when engine is initialized
+    await _engine!.setPosition(state.fen, currentMoves());
+    // Use depth for better analysis instead of movetime
+    await _engine!.go(depth: 12);
   }
 
   List<Offset> _calculatePossibleMoves(
@@ -1460,7 +1512,7 @@ class BoardController extends StateNotifier<BoardState> {
     );
 
     // Trigger engine analysis for the new position
-    _analyzePosition();
+    _analyzePosition(movetimeMs: 1000);
 
     _showNotification(
       'Game started from setup position',
