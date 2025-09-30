@@ -264,21 +264,14 @@ class PikafishEngine implements IEngine {
       'Pikafish setting position - FEN: $fen, Moves: ${moves.join(' ')}',
     );
 
-    // Pikafish is a Chess engine, not Xiangqi
-    // Use startpos for now as a fallback
-    await AppLogger().log('Pikafish is Chess engine, using startpos fallback');
+    // Always use startpos for reliability; Pikafish is a chess engine
     final movesStr = moves.isNotEmpty ? ' moves ${moves.join(' ')}' : '';
-    final positionCmd = 'position startpos$movesStr';
-    await AppLogger().log('Pikafish position command: $positionCmd');
-    send(positionCmd);
-
-    // Send isready to ensure position is set
+    final startCmd = 'position startpos$movesStr';
+    await AppLogger().log('Pikafish position command: $startCmd');
+    send(startCmd);
+    // Ensure engine applies the position
     send('isready');
-    try {
-      await _waitFor('readyok', timeout: const Duration(seconds: 3));
-    } catch (e) {
-      AppLogger().log('Pikafish position timeout: $e');
-    }
+    await _waitFor('readyok', timeout: const Duration(seconds: 3));
   }
 
   @override
@@ -295,9 +288,11 @@ class PikafishEngine implements IEngine {
     }
 
     // Add a timeout mechanism to ensure we get a response
-    // Use much longer timeout for Pikafish to allow deep thinking
-    final timeoutSeconds =
-        (movetimeMs ?? 1000) ~/ 1000 + 10; // Add 10 seconds buffer
+    // Scale timeout by requested depth (approx 2s per depth) and movetime buffer
+    int depthBased = depth != null ? depth * 2 : 0;
+    int timeBased = (movetimeMs ?? 1000) ~/ 1000 + 10; // +10s buffer
+    final timeoutSeconds = (depthBased > timeBased ? depthBased : timeBased)
+        .clamp(10, 120); // clamp to sane bounds
     try {
       await _waitFor('bestmove', timeout: Duration(seconds: timeoutSeconds));
     } catch (e) {

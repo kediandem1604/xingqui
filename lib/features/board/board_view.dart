@@ -234,7 +234,14 @@ class BoardView extends ConsumerWidget {
       if (bl.firstMove.isEmpty || bl.firstMove.length < 4) continue;
       final mv = _parseUciMove(bl.firstMove);
       if (mv == null) continue;
-      arrows.add(_Arrow(mv.fromFile, mv.fromRank, mv.toFile, mv.toRank));
+
+      // Calculate display positions based on isRedAtBottom
+      final fromFile = mv.fromFile;
+      final fromRank = state.isRedAtBottom ? mv.fromRank : 9 - mv.fromRank;
+      final toFile = mv.toFile;
+      final toRank = state.isRedAtBottom ? mv.toRank : 9 - mv.toRank;
+
+      arrows.add(_Arrow(fromFile, fromRank, toFile, toRank));
     }
 
     if (arrows.isEmpty) return const SizedBox.shrink();
@@ -261,14 +268,18 @@ class BoardView extends ConsumerWidget {
     final indicatorSize = (cellWidth * 0.3).clamp(10.0, 20.0);
 
     return state.possibleMoves.map((move) {
+      // Calculate display position based on isRedAtBottom
+      final displayX = move.dx;
+      final displayY = state.isRedAtBottom ? move.dy : 9 - move.dy;
+
       return Positioned(
         left:
             boardOffsetX +
-            move.dx * cellWidth +
+            displayX * cellWidth +
             (cellWidth - indicatorSize) / 2,
         top:
             boardOffsetY +
-            move.dy * cellHeight +
+            displayY * cellHeight +
             (cellHeight - indicatorSize) / 2,
         child: Container(
           width: indicatorSize,
@@ -305,12 +316,16 @@ class BoardView extends ConsumerWidget {
             }
           }
 
+          // Calculate display position based on isRedAtBottom
+          final displayRank = state.isRedAtBottom ? rank : 9 - rank;
+          final displayFile = file;
+
           final isSelected =
               state.selectedFile == file && state.selectedRank == rank;
           final pieceWidget = _buildPiece(
             piece,
-            file,
-            rank,
+            displayFile,
+            displayRank,
             isSelected,
             cellWidth,
             cellHeight,
@@ -344,13 +359,20 @@ class BoardView extends ConsumerWidget {
     if (asset == null) return const SizedBox.shrink();
 
     final pieceSize = (cellWidth * 0.7).clamp(25.0, 50.0);
+
+    // Calculate display positions based on isRedAtBottom
+    final fromFile = anim.fromFile;
+    final fromRank = state.isRedAtBottom ? anim.fromRank : 9 - anim.fromRank;
+    final toFile = anim.toFile;
+    final toRank = state.isRedAtBottom ? anim.toRank : 9 - anim.toRank;
+
     final start = Offset(
-      boardOffsetX + anim.fromFile * cellWidth + (cellWidth - pieceSize) / 2,
-      boardOffsetY + anim.fromRank * cellHeight + (cellHeight - pieceSize) / 2,
+      boardOffsetX + fromFile * cellWidth + (cellWidth - pieceSize) / 2,
+      boardOffsetY + fromRank * cellHeight + (cellHeight - pieceSize) / 2,
     );
     final end = Offset(
-      boardOffsetX + anim.toFile * cellWidth + (cellWidth - pieceSize) / 2,
-      boardOffsetY + anim.toRank * cellHeight + (cellHeight - pieceSize) / 2,
+      boardOffsetX + toFile * cellWidth + (cellWidth - pieceSize) / 2,
+      boardOffsetY + toRank * cellHeight + (cellHeight - pieceSize) / 2,
     );
 
     return _AnimatedPiece(
@@ -448,7 +470,10 @@ class BoardView extends ConsumerWidget {
 
     // Calculate file and rank (0-based, top-left origin)
     final file = (dx / cellWidth).floor().clamp(0, 8);
-    final rank = (dy / cellHeight).floor().clamp(0, 9);
+    final displayRank = (dy / cellHeight).floor().clamp(0, 9);
+
+    // Convert display rank to actual rank based on isRedAtBottom
+    final rank = state.isRedAtBottom ? displayRank : 9 - displayRank;
 
     // Handle piece selection and movement
     controller.onBoardTap(file, rank);

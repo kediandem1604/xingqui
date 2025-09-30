@@ -4,6 +4,7 @@ import 'features/board/board_controller.dart';
 import 'features/board/board_view.dart';
 import 'features/board/controls.dart';
 import 'features/board/best_moves_panel.dart';
+import 'widgets/side_selection_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,13 +35,38 @@ class XiangqiHomePage extends ConsumerStatefulWidget {
 }
 
 class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
+  bool _gameInitialized = false;
+
   @override
   void initState() {
     super.initState();
-    // Initialize the board controller
+    // Show side selection dialog first
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(boardControllerProvider.notifier).init();
+      _showSideSelection();
     });
+  }
+
+  Future<void> _showSideSelection() async {
+    final selectedSide = await SideSelectionDialog.show(context);
+    if (selectedSide != null) {
+      // Initialize the board controller with selected side
+      final controller = ref.read(boardControllerProvider.notifier);
+      await controller.init();
+
+      // Set the board orientation based on selection
+      // Red always moves first, this is just about which side is at bottom
+      if (!selectedSide) {
+        // If user selected Black, put Black at bottom
+        await controller.setRedAtBottom(false);
+      } else {
+        // If user selected Red, put Red at bottom
+        await controller.setRedAtBottom(true);
+      }
+
+      setState(() {
+        _gameInitialized = true;
+      });
+    }
   }
 
   @override
@@ -80,27 +106,29 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
           ),
         ],
       ),
-      body: const Row(
-        children: [
-          // Left side - Board and Controls
-          Expanded(
-            flex: 3,
-            child: Column(
+      body: _gameInitialized
+          ? const Row(
               children: [
-                // Give the board most of the height
-                Expanded(flex: 5, child: BoardView()),
-                // Controls take less height to keep board large
+                // Left side - Board and Controls
                 Expanded(
-                  flex: 2,
-                  child: SingleChildScrollView(child: Controls()),
+                  flex: 3,
+                  child: Column(
+                    children: [
+                      // Give the board most of the height
+                      Expanded(flex: 5, child: BoardView()),
+                      // Controls take less height to keep board large
+                      Expanded(
+                        flex: 2,
+                        child: SingleChildScrollView(child: Controls()),
+                      ),
+                    ],
+                  ),
                 ),
+                // Right side - Best Moves Panel
+                Expanded(flex: 2, child: BestMovesPanel()),
               ],
-            ),
-          ),
-          // Right side - Best Moves Panel
-          Expanded(flex: 2, child: BestMovesPanel()),
-        ],
-      ),
+            )
+          : const Center(child: CircularProgressIndicator()),
     );
   }
 }

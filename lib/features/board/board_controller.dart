@@ -66,6 +66,7 @@ class BoardState {
   final Map<String, int> setupPieces; // piece -> count available
   final String? selectedSetupPiece;
   final String? setupFen; // FEN position when starting from setup
+  final bool isRedAtBottom; // true if red pieces are at bottom, false if black
 
   const BoardState({
     required this.fen,
@@ -89,6 +90,7 @@ class BoardState {
     this.setupPieces = const {},
     this.selectedSetupPiece,
     this.setupFen,
+    this.isRedAtBottom = true, // default: red at bottom
   });
 
   BoardState copyWith({
@@ -113,6 +115,7 @@ class BoardState {
     Map<String, int>? setupPieces,
     String? selectedSetupPiece,
     String? setupFen,
+    bool? isRedAtBottom,
     // explicit clear flags
     bool clearPendingAnimation = false,
     bool clearSelection = false,
@@ -140,6 +143,7 @@ class BoardState {
     setupPieces: setupPieces ?? this.setupPieces,
     selectedSetupPiece: selectedSetupPiece ?? this.selectedSetupPiece,
     setupFen: setupFen ?? this.setupFen,
+    isRedAtBottom: isRedAtBottom ?? this.isRedAtBottom,
   );
 
   static BoardState initial() => BoardState(
@@ -355,9 +359,9 @@ class BoardController extends StateNotifier<BoardState> {
 
   void _startThinkingWatchdog() {
     _thinkingWatchdog?.cancel();
-    // Increase timeout for Pikafish engine to allow deep thinking
+    // Increase timeout for Pikafish engine to allow deeper thinking
     final timeoutDuration = state.selectedEngine == 'Pikafish'
-        ? const Duration(seconds: 15) // Much longer for Pikafish
+        ? const Duration(seconds: 30) // Longer for deeper searches
         : const Duration(seconds: 3);
 
     _thinkingWatchdog = Timer(timeoutDuration, () {
@@ -450,14 +454,26 @@ class BoardController extends StateNotifier<BoardState> {
 
   void _handleEngineMessage(EngineMessage message) {
     if (message is InfoMessage) {
-      AppLogger().log('Engine info: ' + message.raw);
       final pv = EngineParser.parseInfoPv(message.raw);
+      if (state.selectedEngine == 'Pikafish') {
+        if (pv != null) {
+          final first = pv.pvMoves.isNotEmpty ? pv.pvMoves.first : '';
+          AppLogger().log(
+            'Pikafish info: d=${pv.depth} cp=${pv.scoreCp} mpv=${pv.multipv} first $first',
+          );
+        }
+      } else {
+        AppLogger().log('Engine info: ' + message.raw);
+      }
       if (pv != null) {
         final list = [...state.bestLines];
 
+        // Use PV moves as-is for Pikafish
+        final adjustedPvMoves = pv.pvMoves;
+
         // Handle MultiPV differently for different engines
         final idx = _getMultiPvIndex(pv.multipv);
-        final bl = BestLine(idx, pv.depth, pv.scoreCp, pv.pvMoves);
+        final bl = BestLine(idx, pv.depth, pv.scoreCp, adjustedPvMoves);
 
         final existingIndex = list.indexWhere((e) => e.index == idx);
         if (existingIndex >= 0) {
@@ -471,7 +487,8 @@ class BoardController extends StateNotifier<BoardState> {
         state = state.copyWith(bestLines: list);
       }
     } else if (message is BestMoveMessage) {
-      AppLogger().log('Engine bestmove: ' + message.bestMove);
+      AppLogger().log('*** RECEIVED BESTMOVE: ${message.bestMove} ***');
+      AppLogger().log('Engine bestmove raw: ${message.raw}');
       state = state.copyWith(isEngineThinking: false);
       _thinkingWatchdog?.cancel();
       // Signal a single search cycle completed when using EleEye banmoves loop
@@ -513,8 +530,24 @@ class BoardController extends StateNotifier<BoardState> {
     state = state.copyWith(fen: newFen);
 
     if (_engine != null) {
+      if (state.selectedEngine == 'Pikafish') {
+        try {
+          await _engine!.newGame();
+          await AppLogger().log('Pikafish newgame after side switch');
+
+          // For Pikafish, always use startpos and let it analyze from there
+          await AppLogger().log('Setting Pikafish position with startpos');
+          await _engine!.setPosition('startpos', []);
+        } catch (e) {
+          await AppLogger().error('Pikafish side switch error', e);
+        }
+      }
       await _analyzePosition(movetimeMs: 1000);
     }
+  }
+
+  Future<void> setRedAtBottom(bool isRedAtBottom) async {
+    state = state.copyWith(isRedAtBottom: isRedAtBottom);
   }
 
   Future<void> setMultiPv(int n) async {
@@ -529,6 +562,12 @@ class BoardController extends StateNotifier<BoardState> {
     if (_engine == null) return;
 
     await AppLogger().log('Apply move: ' + moveUci);
+
+    // Hard de-dup: if the last committed move equals the incoming move, ignore
+    if (state.pointer > 0 && state.moves[state.pointer - 1] == moveUci) {
+      await AppLogger().log('Skip apply - duplicate of last move: ' + moveUci);
+      return;
+    }
 
     // Deduplicate quick double commits
     final now = DateTime.now();
@@ -577,7 +616,13 @@ class BoardController extends StateNotifier<BoardState> {
     );
 
     // Set position FIRST
-    await _engine!.setPosition(state.fen, currentMoves());
+    if (state.selectedEngine == 'Pikafish') {
+      // For Pikafish, always use startpos with move history
+      await _engine!.setPosition('startpos', currentMoves());
+    } else {
+      // For other engines, use FEN
+      await _engine!.setPosition(state.fen, currentMoves());
+    }
 
     // Only NOW clear animation after everything is set
     if (hadAnimation) {
@@ -1261,13 +1306,14 @@ class BoardController extends StateNotifier<BoardState> {
       if (isEleEye && state.multiPv > 1) {
         // EleEye path: emulate MultiPV using iterative banmoves
         await _analyzePositionEleEye(movetimeMs);
-      } else if (isPikafish && state.multiPv > 1) {
-        // Pikafish path: native MultiPV support (only when MultiPV > 1)
-        await _analyzePositionPikafish(movetimeMs);
       } else if (isPikafish) {
-        // Pikafish single PV: use depth instead of movetime for better analysis
-        await _engine!.setPosition(state.fen, currentMoves());
-        await _engine!.go(depth: 15); // Use depth 15 for deep analysis
+        // Pikafish: always use startpos with move history
+        await _engine!.setPosition('startpos', currentMoves());
+        if (state.multiPv > 1) {
+          await _engine!.go(depth: 16);
+        } else {
+          await _engine!.go(depth: 16);
+        }
       } else {
         // Standard path: single PV or other engines
         await _engine!.setPosition(state.fen, currentMoves());
@@ -1320,15 +1366,6 @@ class BoardController extends StateNotifier<BoardState> {
 
     // Restore flags
     _eleEyeBanMode = false;
-  }
-
-  // Pikafish-specific MultiPV analysis using native MultiPV
-  Future<void> _analyzePositionPikafish(int? movetimeMs) async {
-    // Pikafish supports native MultiPV, so just set position and go
-    // MultiPV is already set via setMultiPV() when engine is initialized
-    await _engine!.setPosition(state.fen, currentMoves());
-    // Use depth for better analysis instead of movetime
-    await _engine!.go(depth: 12);
   }
 
   List<Offset> _calculatePossibleMoves(
