@@ -461,6 +461,9 @@ class BoardController extends StateNotifier<BoardState> {
           AppLogger().log(
             'Pikafish info: d=${pv.depth} cp=${pv.scoreCp} mpv=${pv.multipv} first $first',
           );
+        } else {
+          // Log raw info when PV parsing fails
+          AppLogger().log('Pikafish raw info (no PV): ${message.raw}');
         }
       } else {
         AppLogger().log('Engine info: ' + message.raw);
@@ -484,6 +487,14 @@ class BoardController extends StateNotifier<BoardState> {
 
         // Sort by index
         list.sort((a, b) => a.index.compareTo(b.index));
+
+        // Debug logging for MultiPV
+        if (state.selectedEngine == 'Pikafish') {
+          AppLogger().log(
+            'Updated bestLines: ${list.map((e) => 'PV${e.index}').join(', ')}',
+          );
+        }
+
         state = state.copyWith(bestLines: list);
       }
     } else if (message is BestMoveMessage) {
@@ -494,6 +505,55 @@ class BoardController extends StateNotifier<BoardState> {
       // Signal a single search cycle completed when using EleEye banmoves loop
       if (_bestMoveOnce != null && !(_bestMoveOnce!.isCompleted)) {
         _bestMoveOnce!.complete();
+      }
+    } else if (message is GameOverMessage) {
+      // Handle game over messages from Pikafish engine
+      AppLogger().log(
+        '*** GAME OVER DETECTED BY PIKAFISH: ${message.reason} ***',
+      );
+      state = state.copyWith(isEngineThinking: false);
+      _thinkingWatchdog?.cancel();
+
+      // Show appropriate notification based on the reason
+      if (message.reason.toLowerCase().contains('checkmate')) {
+        final sideToMove = FenParser.getSideToMove(state.fen);
+        final winningPlayer = sideToMove == 'w' ? 'Black' : 'Red';
+        _showNotification(
+          '$winningPlayer WINS! Checkmate!',
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 5),
+        );
+      } else if (message.reason.toLowerCase().contains('mate in')) {
+        _showNotification(
+          message.reason,
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+        );
+      } else if (message.reason.toLowerCase().contains('no legal moves')) {
+        // This could be checkmate or stalemate - check the position
+        final isInCheck = GameStatusService.isInCheck(state.fen);
+        if (isInCheck) {
+          final sideToMove = FenParser.getSideToMove(state.fen);
+          final winningPlayer = sideToMove == 'w' ? 'Black' : 'Red';
+          _showNotification(
+            '$winningPlayer WINS! Checkmate!',
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 5),
+          );
+        } else {
+          _showNotification(
+            'DRAW! Stalemate!',
+            backgroundColor: Colors.blue,
+            duration: const Duration(seconds: 5),
+          );
+        }
+      } else {
+        // Generic game over message
+        _showNotification(
+          message.reason,
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        );
       }
     } else if (message is ErrorMessage) {
       AppLogger().error('Engine error', message.raw);
@@ -535,9 +595,18 @@ class BoardController extends StateNotifier<BoardState> {
           await _engine!.newGame();
           await AppLogger().log('Pikafish newgame after side switch');
 
-          // For Pikafish, always use startpos and let it analyze from there
-          await AppLogger().log('Setting Pikafish position with startpos');
-          await _engine!.setPosition('startpos', []);
+          // For Pikafish, use startpos if game started from initial position, otherwise use FEN
+          if (_isGameFromInitialPosition()) {
+            await AppLogger().log(
+              'Setting Pikafish position with startpos (initial position)',
+            );
+            await _engine!.setPosition('startpos', currentMoves());
+          } else {
+            await AppLogger().log(
+              'Setting Pikafish position with custom FEN (setup board)',
+            );
+            await _engine!.setPosition(state.fen, []);
+          }
         } catch (e) {
           await AppLogger().error('Pikafish side switch error', e);
         }
@@ -615,12 +684,14 @@ class BoardController extends StateNotifier<BoardState> {
       isEngineThinking: false,
     );
 
-    // Set position FIRST
+    // Set position FIRST - for Pikafish use startpos if game from initial, otherwise FEN
     if (state.selectedEngine == 'Pikafish') {
-      // For Pikafish, always use startpos with move history
-      await _engine!.setPosition('startpos', currentMoves());
+      if (_isGameFromInitialPosition()) {
+        await _engine!.setPosition('startpos', currentMoves());
+      } else {
+        await _engine!.setPosition(state.fen, currentMoves());
+      }
     } else {
-      // For other engines, use FEN
       await _engine!.setPosition(state.fen, currentMoves());
     }
 
@@ -692,7 +763,21 @@ class BoardController extends StateNotifier<BoardState> {
     );
 
     // Set engine position to match the board state
-    await _engine!.setPosition(newFen, state.moves.take(newPointer).toList());
+    if (state.selectedEngine == 'Pikafish') {
+      if (_isGameFromInitialPosition()) {
+        await _engine!.setPosition(
+          'startpos',
+          state.moves.take(newPointer).toList(),
+        );
+      } else {
+        await _engine!.setPosition(
+          newFen,
+          state.moves.take(newPointer).toList(),
+        );
+      }
+    } else {
+      await _engine!.setPosition(newFen, state.moves.take(newPointer).toList());
+    }
     await _analyzePosition(movetimeMs: 1000);
   }
 
@@ -729,7 +814,21 @@ class BoardController extends StateNotifier<BoardState> {
     );
 
     // Set engine position to match the board state
-    await _engine!.setPosition(newFen, state.moves.take(newPointer).toList());
+    if (state.selectedEngine == 'Pikafish') {
+      if (_isGameFromInitialPosition()) {
+        await _engine!.setPosition(
+          'startpos',
+          state.moves.take(newPointer).toList(),
+        );
+      } else {
+        await _engine!.setPosition(
+          newFen,
+          state.moves.take(newPointer).toList(),
+        );
+      }
+    } else {
+      await _engine!.setPosition(newFen, state.moves.take(newPointer).toList());
+    }
     await _analyzePosition(movetimeMs: 1000);
   }
 
@@ -1307,8 +1406,16 @@ class BoardController extends StateNotifier<BoardState> {
         // EleEye path: emulate MultiPV using iterative banmoves
         await _analyzePositionEleEye(movetimeMs);
       } else if (isPikafish) {
-        // Pikafish: always use startpos with move history
-        await _engine!.setPosition('startpos', currentMoves());
+        // Pikafish: use startpos if game from initial position, otherwise FEN
+        if (_isGameFromInitialPosition()) {
+          await _engine!.setPosition('startpos', currentMoves());
+        } else {
+          await _engine!.setPosition(state.fen, currentMoves());
+        }
+
+        // Clear previous bestLines before new analysis
+        state = state.copyWith(bestLines: []);
+
         if (state.multiPv > 1) {
           await _engine!.go(depth: 16);
         } else {
@@ -1556,6 +1663,17 @@ class BoardController extends StateNotifier<BoardState> {
       backgroundColor: Colors.green,
       duration: const Duration(seconds: 2),
     );
+  }
+
+  // Helper to check if game started from initial xiangqi position
+  bool _isGameFromInitialPosition() {
+    // Check if the game started from standard xiangqi position
+    // This is true if we have no setup FEN or the setup FEN is the standard position
+    return state.setupFen == null ||
+        state.setupFen ==
+            'rheakaehr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RHEAKAEHR w - - 0 1' ||
+        state.setupFen ==
+            'rheakaehr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RHEAKAEHR';
   }
 
   @override

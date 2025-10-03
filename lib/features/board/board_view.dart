@@ -31,33 +31,7 @@ class BoardView extends ConsumerWidget {
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Engine: ${state.selectedEngine}'),
-                          if (state.engineError != null) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              state.engineError!,
-                              style: const TextStyle(
-                                color: Colors.red,
-                                fontSize: 12,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 2,
-                            ),
-                            if (state.enginePath != null) ...[
-                              const SizedBox(height: 2),
-                              Text(
-                                'Path: ' + state.enginePath!,
-                                style: const TextStyle(
-                                  color: Colors.black54,
-                                  fontSize: 11,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
-                            ],
-                          ],
-                        ],
+                        children: [Text('Engine: ${state.selectedEngine}')],
                       ),
                     ),
                     if (state.isEngineThinking)
@@ -677,7 +651,7 @@ Widget _buildSetupModeUI(BoardState state, BoardController controller) {
       children: [
         // Setup controls
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: Colors.blue[50],
             borderRadius: BorderRadius.circular(8),
@@ -689,7 +663,7 @@ Widget _buildSetupModeUI(BoardState state, BoardController controller) {
                 children: [
                   const Text(
                     'Setup Mode',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   Row(
                     children: [
@@ -706,13 +680,13 @@ Widget _buildSetupModeUI(BoardState state, BoardController controller) {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               // Piece selection
               _buildPieceSelection(state, controller),
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         // Setup board
         Expanded(
           child: LayoutBuilder(
@@ -769,8 +743,8 @@ Widget _buildSetupModeUI(BoardState state, BoardController controller) {
 
 Widget _buildPieceSelection(BoardState state, BoardController controller) {
   return Wrap(
-    spacing: 8,
-    runSpacing: 8,
+    spacing: 6,
+    runSpacing: 6,
     children: state.setupPieces.entries.where((entry) => entry.value > 0).map((
       entry,
     ) {
@@ -781,13 +755,13 @@ Widget _buildPieceSelection(BoardState state, BoardController controller) {
       return GestureDetector(
         onTap: () => controller.selectSetupPiece(piece),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           decoration: BoxDecoration(
             color: isSelected ? Colors.blue : Colors.grey[200],
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: isSelected ? Colors.blue : Colors.grey,
-              width: 2,
+              width: 1.5,
             ),
           ),
           child: Row(
@@ -796,16 +770,16 @@ Widget _buildPieceSelection(BoardState state, BoardController controller) {
               Text(
                 piece,
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: isSelected ? Colors.white : Colors.black,
                 ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: 3),
               Text(
                 '($count)',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   color: isSelected ? Colors.white : Colors.grey[600],
                 ),
               ),

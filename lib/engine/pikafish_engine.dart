@@ -4,6 +4,7 @@ import 'dart:io';
 import 'engine_base.dart';
 import 'engine_parser.dart';
 import '../core/logger.dart';
+import '../core/fen.dart';
 
 /// Pikafish engine with custom UCI->UCCI conversion
 class PikafishEngine implements IEngine {
@@ -116,6 +117,9 @@ class PikafishEngine implements IEngine {
       final convertedInfo = _convertInfoLine(line);
       if (convertedInfo != null) {
         _ctrl.add(InfoMessage(convertedInfo));
+
+        // Check for game over conditions in info output
+        _checkGameOverFromInfo(line);
       }
     } else if (line.startsWith('bestmove')) {
       // Convert UCI bestmove to UCCI format
@@ -129,6 +133,9 @@ class PikafishEngine implements IEngine {
         );
         _ctrl.add(BestMoveMessage(line, line));
       }
+
+      // Check for game over conditions in bestmove output
+      _checkGameOverFromBestMove(line);
     } else if (line.contains('readyok')) {
       _ctrl.add(ReadyMessage(line));
     } else if (line.contains('uciok')) {
@@ -191,6 +198,59 @@ class PikafishEngine implements IEngine {
         toFile <= 8 &&
         toRank >= 0 &&
         toRank <= 9;
+  }
+
+  /// Check for game over conditions from info output
+  void _checkGameOverFromInfo(String line) {
+    try {
+      // Look for mate scores in info output
+      // Example: "info depth 10 score mate 0 pv ..." (checkmate)
+      // Example: "info depth 10 score mate -3 pv ..." (mate in 3 for opponent)
+      if (line.contains('score mate')) {
+        final parts = line.split(' ');
+        final scoreIndex = parts.indexOf('score');
+        if (scoreIndex >= 0 && scoreIndex + 2 < parts.length) {
+          final mateValue = int.tryParse(parts[scoreIndex + 2]);
+          if (mateValue != null) {
+            if (mateValue == 0) {
+              // Checkmate detected
+              AppLogger().log('Pikafish detected checkmate from info: $line');
+              _ctrl.add(GameOverMessage('Checkmate detected by Pikafish'));
+            } else if (mateValue > 0) {
+              // Mate in N moves for current player
+              AppLogger().log(
+                'Pikafish detected mate in $mateValue from info: $line',
+              );
+              _ctrl.add(GameOverMessage('Mate in $mateValue moves'));
+            } else {
+              // Mate in N moves for opponent
+              AppLogger().log(
+                'Pikafish detected mate in ${-mateValue} for opponent from info: $line',
+              );
+              _ctrl.add(
+                GameOverMessage('Opponent has mate in ${-mateValue} moves'),
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      AppLogger().error('Error checking game over from info', e);
+    }
+  }
+
+  /// Check for game over conditions from bestmove output
+  void _checkGameOverFromBestMove(String line) {
+    try {
+      // Look for special bestmove values that indicate game over
+      // Example: "bestmove (none)" - no legal moves (checkmate or stalemate)
+      if (line.contains('bestmove (none)')) {
+        AppLogger().log('Pikafish detected no legal moves: $line');
+        _ctrl.add(GameOverMessage('No legal moves - Game Over'));
+      }
+    } catch (e) {
+      AppLogger().error('Error checking game over from bestmove', e);
+    }
   }
 
   Future<void> _waitFor(
@@ -264,11 +324,14 @@ class PikafishEngine implements IEngine {
       'Pikafish setting position - FEN: $fen, Moves: ${moves.join(' ')}',
     );
 
-    // Always use startpos for reliability; Pikafish is a chess engine
+    // Use startpos for standard starting position, fen for custom positions
     final movesStr = moves.isNotEmpty ? ' moves ${moves.join(' ')}' : '';
-    final startCmd = 'position startpos$movesStr';
-    await AppLogger().log('Pikafish position command: $startCmd');
-    send(startCmd);
+    final isStandardStart = fen == defaultXqFen || fen == 'startpos';
+    final positionCmd = isStandardStart
+        ? 'position startpos$movesStr'
+        : 'position fen $fen$movesStr';
+    await AppLogger().log('Pikafish position command: $positionCmd');
+    send(positionCmd);
     // Ensure engine applies the position
     send('isready');
     await _waitFor('readyok', timeout: const Duration(seconds: 3));
@@ -291,8 +354,9 @@ class PikafishEngine implements IEngine {
     // Scale timeout by requested depth (approx 2s per depth) and movetime buffer
     int depthBased = depth != null ? depth * 2 : 0;
     int timeBased = (movetimeMs ?? 1000) ~/ 1000 + 10; // +10s buffer
+    // Increase timeout for deeper analysis to allow MultiPV to complete
     final timeoutSeconds = (depthBased > timeBased ? depthBased : timeBased)
-        .clamp(10, 120); // clamp to sane bounds
+        .clamp(15, 180); // Increased from 10-120 to 15-180 seconds
     try {
       await _waitFor('bestmove', timeout: Duration(seconds: timeoutSeconds));
     } catch (e) {

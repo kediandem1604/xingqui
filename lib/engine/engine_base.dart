@@ -32,6 +32,11 @@ class UcciOkMessage extends EngineMessage {
   const UcciOkMessage(super.raw);
 }
 
+class GameOverMessage extends EngineMessage {
+  final String reason;
+  const GameOverMessage(this.reason) : super('Game Over: $reason');
+}
+
 // Abstract engine interface
 abstract class IEngine {
   Future<void> start();

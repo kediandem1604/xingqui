@@ -40,9 +40,17 @@ class EngineParser {
           }
           break;
         case 'score':
-          // Accept both "score cp N" and "score N"
+          // Accept "score cp N", "score mate N", and "score N"
           if (i + 2 < parts.length && parts[i + 1] == 'cp') {
             score = int.tryParse(parts[i + 2]);
+            i += 2;
+          } else if (i + 2 < parts.length && parts[i + 1] == 'mate') {
+            // Convert mate score to a very high/low centipawn score
+            final mateValue = int.tryParse(parts[i + 2]);
+            if (mateValue != null) {
+              // Mate in N moves: positive for winning, negative for losing
+              score = mateValue > 0 ? 10000 - mateValue : -10000 - mateValue;
+            }
             i += 2;
           } else if (i + 1 < parts.length) {
             final v = int.tryParse(parts[i + 1]);
@@ -58,6 +66,9 @@ class EngineParser {
             pvMoves.add(parts[j]);
           }
           i = parts.length; // Break loop
+          break;
+        default:
+          // Skip unknown tokens
           break;
       }
     }
