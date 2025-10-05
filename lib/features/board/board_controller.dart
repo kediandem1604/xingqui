@@ -207,7 +207,7 @@ class BoardController extends StateNotifier<BoardState> {
   Future<void> _switchEngine(String engineName) async {
     String? previousEngine = state.selectedEngine;
     try {
-      await AppLogger().log('Switching engine to: ' + engineName);
+      await AppLogger().log('Switching engine to: $engineName');
       // Stop current engine
       if (_engine != null) {
         await AppLogger().log('Stopping previous engine...');
@@ -230,7 +230,7 @@ class BoardController extends StateNotifier<BoardState> {
           await AppLogger().log('pikafish engine path resolved: $pikafishPath');
           if (!File(pikafishPath).existsSync()) {
             await AppLogger().error('pikafish engine not found', pikafishPath);
-            throw Exception('pikafish engine not found at: ' + pikafishPath);
+            throw Exception('pikafish engine not found at: $pikafishPath');
           }
           _engine = PikafishEngine(pikafishPath);
           await AppLogger().log('PikafishEngine created');
@@ -249,7 +249,7 @@ class BoardController extends StateNotifier<BoardState> {
           await AppLogger().log('EleEye path resolved: $path');
           if (!File(path).existsSync()) {
             await AppLogger().error('EleEye not found', path);
-            throw Exception('EleEye executable not found at: ' + path);
+            throw Exception('EleEye executable not found at: $path');
           }
           _engine = UcciEngine(path);
           await AppLogger().log('UcciEngine created for EleEye');
@@ -286,7 +286,7 @@ class BoardController extends StateNotifier<BoardState> {
       await AppLogger().log('Engine initialized');
     } catch (e) {
       print('Failed to switch to engine $engineName: $e');
-      await AppLogger().error('Switch engine failed: ' + engineName, e);
+      await AppLogger().error('Switch engine failed: $engineName', e);
       // Revert to previous engine selection and safe state
       state = state.copyWith(
         selectedEngine: previousEngine,
@@ -466,7 +466,7 @@ class BoardController extends StateNotifier<BoardState> {
           AppLogger().log('Pikafish raw info (no PV): ${message.raw}');
         }
       } else {
-        AppLogger().log('Engine info: ' + message.raw);
+        AppLogger().log('Engine info: ${message.raw}');
       }
       if (pv != null) {
         final list = [...state.bestLines];
@@ -630,11 +630,11 @@ class BoardController extends StateNotifier<BoardState> {
   Future<void> applyMove(String moveUci) async {
     if (_engine == null) return;
 
-    await AppLogger().log('Apply move: ' + moveUci);
+    await AppLogger().log('Apply move: $moveUci');
 
     // Hard de-dup: if the last committed move equals the incoming move, ignore
     if (state.pointer > 0 && state.moves[state.pointer - 1] == moveUci) {
-      await AppLogger().log('Skip apply - duplicate of last move: ' + moveUci);
+      await AppLogger().log('Skip apply - duplicate of last move: $moveUci');
       return;
     }
 
@@ -643,7 +643,7 @@ class BoardController extends StateNotifier<BoardState> {
     if (_recentAppliedMove == moveUci &&
         _recentAppliedAt != null &&
         now.difference(_recentAppliedAt!).inMilliseconds < 800) {
-      await AppLogger().log('Skip duplicate apply for: ' + moveUci);
+      await AppLogger().log('Skip duplicate apply for: $moveUci');
       return;
     }
     _recentAppliedMove = moveUci;
@@ -941,7 +941,7 @@ class BoardController extends StateNotifier<BoardState> {
           '*** SHOWING CHECK NOTIFICATION for $currentPlayer ***',
         );
         _showNotification(
-          '${currentPlayer} is in CHECK!',
+          '$currentPlayer is in CHECK!',
           backgroundColor: Colors.orange,
           duration: const Duration(seconds: 4),
         );
@@ -1444,7 +1444,7 @@ class BoardController extends StateNotifier<BoardState> {
 
       if (_bannedFirstMoves.isNotEmpty) {
         // Example: "banmoves b2b9 h2h9"
-        final cmd = 'banmoves ' + _bannedFirstMoves.join(' ');
+        final cmd = 'banmoves ${_bannedFirstMoves.join(' ')}';
         _engine!.send(cmd);
       }
 
