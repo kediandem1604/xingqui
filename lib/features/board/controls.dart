@@ -72,50 +72,73 @@ class Controls extends ConsumerWidget {
                 max: 3,
                 divisions: 2,
                 label: state.multiPv.toString(),
-                onChanged: (value) {
-                  controller.setMultiPv(value.round());
-                },
+                onChanged: state.selectedEngine == 'EleEye'
+                    ? null
+                    : (value) {
+                        controller.setMultiPv(value.round());
+                      },
               ),
               Text('${state.multiPv}'),
+              if (state.selectedEngine == 'EleEye')
+                const Text(
+                  ' (EleEye chỉ hỗ trợ 1)',
+                  style: TextStyle(color: Colors.orange, fontSize: 12),
+                ),
             ],
           ),
 
           const SizedBox(height: 16),
 
-          // Side selection
+          // Side to move (display only)
           Row(
             children: [
               const Text('Side to Move: '),
-              ToggleButtons(
-                isSelected: [state.redToMove, !state.redToMove],
-                onPressed: (index) {
-                  controller.onPickSide(red: index == 0);
-                },
-                children: const [Text('Red'), Text('Black')],
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: state.redToMove ? Colors.red[100] : Colors.black87,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: state.redToMove ? Colors.red : Colors.black,
+                    width: 2,
+                  ),
+                ),
+                child: Text(
+                  state.redToMove ? 'Red' : 'Black',
+                  style: TextStyle(
+                    color: state.redToMove ? Colors.red[800] : Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
               ),
             ],
           ),
 
           const SizedBox(height: 16),
 
-          // Navigation controls
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              ElevatedButton(
-                onPressed: state.canBack ? () => controller.back() : null,
-                child: const Text('Back'),
-              ),
-              ElevatedButton(
-                onPressed: () => controller.reset(),
-                child: const Text('Reset'),
-              ),
-              ElevatedButton(
-                onPressed: state.canNext ? () => controller.next() : null,
-                child: const Text('Next'),
-              ),
-            ],
-          ),
+          // Navigation controls - hide when in setup mode
+          if (!state.isSetupMode)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton(
+                  onPressed: state.canBack ? () => controller.back() : null,
+                  child: const Text('Back'),
+                ),
+                ElevatedButton(
+                  onPressed: () => controller.reset(),
+                  child: const Text('Reset'),
+                ),
+                ElevatedButton(
+                  onPressed: state.canNext ? () => controller.next() : null,
+                  child: const Text('Next'),
+                ),
+              ],
+            ),
 
           const SizedBox(height: 16),
 

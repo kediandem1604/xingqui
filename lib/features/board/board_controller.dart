@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../engine/engine_base.dart';
@@ -68,6 +67,14 @@ class BoardState {
   final String? setupFen; // FEN position when starting from setup
   final bool isRedAtBottom; // true if red pieces are at bottom, false if black
 
+  // AI vs Human mode
+  final bool isVsEngineMode; // true if playing against engine
+  final bool isEngineTurn; // true if it's engine's turn to move
+
+  // Setup mode navigation
+  final List<String> setupMoveHistory; // FEN history for setup mode
+  final int setupMoveHistoryPointer; // current position in setup history
+
   const BoardState({
     required this.fen,
     required this.moves,
@@ -91,6 +98,10 @@ class BoardState {
     this.selectedSetupPiece,
     this.setupFen,
     this.isRedAtBottom = true, // default: red at bottom
+    this.isVsEngineMode = false,
+    this.isEngineTurn = false,
+    this.setupMoveHistory = const [],
+    this.setupMoveHistoryPointer = 0,
   });
 
   BoardState copyWith({
@@ -116,6 +127,10 @@ class BoardState {
     String? selectedSetupPiece,
     String? setupFen,
     bool? isRedAtBottom,
+    bool? isVsEngineMode,
+    bool? isEngineTurn,
+    List<String>? setupMoveHistory,
+    int? setupMoveHistoryPointer,
     // explicit clear flags
     bool clearPendingAnimation = false,
     bool clearSelection = false,
@@ -144,6 +159,11 @@ class BoardState {
     selectedSetupPiece: selectedSetupPiece ?? this.selectedSetupPiece,
     setupFen: setupFen ?? this.setupFen,
     isRedAtBottom: isRedAtBottom ?? this.isRedAtBottom,
+    isVsEngineMode: isVsEngineMode ?? this.isVsEngineMode,
+    isEngineTurn: isEngineTurn ?? this.isEngineTurn,
+    setupMoveHistory: setupMoveHistory ?? this.setupMoveHistory,
+    setupMoveHistoryPointer:
+        setupMoveHistoryPointer ?? this.setupMoveHistoryPointer,
   );
 
   static BoardState initial() => BoardState(
@@ -172,10 +192,6 @@ class BoardController extends StateNotifier<BoardState> {
   Timer? _thinkingWatchdog;
   Timer? _animationAutoCommit;
   Timer? _animationWatchdog;
-  // EleEye MultiPV support via iterative banmoves
-  bool _eleEyeBanMode = false;
-  int _banIteration = 0; // 0-based; displayed as index = _banIteration + 1
-  final List<String> _bannedFirstMoves = [];
   Completer<void>? _bestMoveOnce;
   bool _isCommittingAnim = false;
   String? _recentAppliedMove;
@@ -474,11 +490,10 @@ class BoardController extends StateNotifier<BoardState> {
         // Use PV moves as-is for Pikafish
         final adjustedPvMoves = pv.pvMoves;
 
-        // Handle MultiPV differently for different engines
-        final idx = _getMultiPvIndex(pv.multipv);
-        final bl = BestLine(idx, pv.depth, pv.scoreCp, adjustedPvMoves);
+        // Use multipv directly from engine output
+        final bl = BestLine(pv.multipv, pv.depth, pv.scoreCp, adjustedPvMoves);
 
-        final existingIndex = list.indexWhere((e) => e.index == idx);
+        final existingIndex = list.indexWhere((e) => e.index == pv.multipv);
         if (existingIndex >= 0) {
           list[existingIndex] = bl;
         } else {
@@ -561,17 +576,6 @@ class BoardController extends StateNotifier<BoardState> {
     }
   }
 
-  // Get the correct MultiPV index based on engine type
-  int _getMultiPvIndex(int pvMultipv) {
-    if (_eleEyeBanMode) {
-      // EleEye banmoves mode: use iteration-based index
-      return _banIteration + 1;
-    } else {
-      // Pikafish and other engines: use the multipv from engine output
-      return pvMultipv;
-    }
-  }
-
   Future<void> _initializeGame() async {
     if (_engine == null) return;
 
@@ -621,6 +625,14 @@ class BoardController extends StateNotifier<BoardState> {
 
   Future<void> setMultiPv(int n) async {
     if (_engine == null) return;
+
+    // Lock MultiPV to 1 for EleEye since it doesn't support MultiPV
+    if (state.selectedEngine == 'EleEye') {
+      AppLogger().log(
+        'EleEye selected - MultiPV locked to 1 (ignoring request for $n)',
+      );
+      return; // Don't change MultiPV for EleEye
+    }
 
     state = state.copyWith(multiPv: n, bestLines: []);
     await _engine!.setMultiPV(n);
@@ -725,6 +737,21 @@ class BoardController extends StateNotifier<BoardState> {
     if (!isCheckmate && (winner == null || winner == 'Draw')) {
       // Game is still ongoing, start analysis
       await _analyzePosition(movetimeMs: 1000);
+
+      // Check if it's engine's turn in vs engine mode
+      if (state.isVsEngineMode) {
+        final isRedToMove = FenParser.getSideToMove(state.fen) == 'w';
+        final shouldBeEngineTurn = !isRedToMove; // Engine plays as Black
+
+        if (shouldBeEngineTurn && !state.isEngineTurn) {
+          // Switch to engine's turn
+          state = state.copyWith(isEngineTurn: true);
+          _makeEngineMove();
+        } else if (!shouldBeEngineTurn && state.isEngineTurn) {
+          // Switch to human's turn
+          state = state.copyWith(isEngineTurn: false);
+        }
+      }
     } else {
       AppLogger().log('Game is over - skipping engine analysis');
     }
@@ -1081,6 +1108,64 @@ class BoardController extends StateNotifier<BoardState> {
 
   Future<void> switchEngine(String engineName) async {
     await _switchEngine(engineName);
+
+    // Lock MultiPV to 1 for EleEye since it doesn't support MultiPV
+    if (engineName == 'EleEye') {
+      state = state.copyWith(multiPv: 1);
+      AppLogger().log('EleEye selected - MultiPV locked to 1');
+    }
+  }
+
+  // AI vs Human mode methods
+  void setVsEngineMode(bool enabled) {
+    state = state.copyWith(
+      isVsEngineMode: enabled,
+      isEngineTurn: enabled
+          ? !state.redToMove
+          : false, // Engine plays as Black by default
+    );
+
+    if (enabled && state.isEngineTurn) {
+      // If it's engine's turn, make a move
+      _makeEngineMove();
+    }
+  }
+
+  Future<void> _makeEngineMove() async {
+    if (!state.isVsEngineMode || !state.isEngineTurn || _engine == null) return;
+
+    try {
+      // Get the best move from engine
+      await _engine!.setPosition(state.fen, currentMoves());
+      await _engine!.go(depth: 16); // TODO: Use depth from settings
+
+      // Wait for best move
+      final completer = Completer<String>();
+      late StreamSubscription subscription;
+
+      subscription = _engine!.messages.listen((message) {
+        if (message is BestMoveMessage) {
+          completer.complete(message.bestMove);
+          subscription.cancel();
+        }
+      });
+
+      final bestMove = await completer.future.timeout(
+        const Duration(seconds: 10),
+      );
+
+      if (bestMove.isNotEmpty && bestMove != 'null') {
+        // Apply the engine's move
+        await applyMove(bestMove);
+      }
+    } catch (e) {
+      AppLogger().error('Engine move failed', e);
+      _showNotification(
+        'Engine move failed: ${e.toString()}',
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 3),
+      );
+    }
   }
 
   void onBoardTap(int file, int rank) {
@@ -1150,12 +1235,15 @@ class BoardController extends StateNotifier<BoardState> {
       final selectedFile = state.selectedFile!;
       final selectedRank = state.selectedRank!;
 
-      // Check if clicking on the same piece (deselect)
+      // Check if clicking on the same piece - allow reselection
       if (file == selectedFile && rank == selectedRank) {
+        // Allow reselecting the same piece to refresh possible moves
+        final possibleMoves = _calculatePossibleMoves(file, rank, board);
+        AppLogger().log('Reselected same piece. Refreshing possible moves.');
         state = state.copyWith(
-          selectedFile: null,
-          selectedRank: null,
-          possibleMoves: [],
+          selectedFile: file,
+          selectedRank: rank,
+          possibleMoves: possibleMoves,
         );
         return;
       }
@@ -1189,12 +1277,49 @@ class BoardController extends StateNotifier<BoardState> {
           chosen = m;
         }
       }
-      // Accept if within ~1 cell from a legal destination (to absorb mapping/flooring errors)
-      if (chosen == null || best > 1.1) {
-        // Not near any legal destination; ignore
+      // Accept if within ~0.3 cell from a legal destination (more precise touch area)
+      if (chosen == null || best > 0.3) {
+        // Not near any legal destination
         AppLogger().log(
-          'No near legal destination. best=$best, pmCount=${state.possibleMoves.length}',
+          'No near legal destination. best=$best, pmCount=${state.possibleMoves.length}.',
         );
+
+        // Only try to select different piece if clicking on a piece
+        if (piece.isNotEmpty) {
+          final isRedPiece = piece == piece.toUpperCase();
+          final isRedToMove = FenParser.getSideToMove(state.fen) == 'w';
+
+          // Only allow selecting piece of the same side to move
+          if ((isRedToMove && isRedPiece) || (!isRedToMove && !isRedPiece)) {
+            final possibleMoves = _calculatePossibleMoves(file, rank, board);
+            AppLogger().log(
+              'Selected different piece of same side. possibleMoves=${possibleMoves.length}',
+            );
+            state = state.copyWith(
+              selectedFile: file,
+              selectedRank: rank,
+              possibleMoves: possibleMoves,
+            );
+          } else {
+            // Clicked on opponent piece or wrong side, deselect current piece
+            AppLogger().log(
+              'Clicked on opponent piece or wrong side. Deselect current piece.',
+            );
+            state = state.copyWith(
+              selectedFile: null,
+              selectedRank: null,
+              possibleMoves: [],
+            );
+          }
+        } else {
+          // Clicked on empty square, deselect
+          AppLogger().log('Clicked empty square. Deselect.');
+          state = state.copyWith(
+            selectedFile: null,
+            selectedRank: null,
+            possibleMoves: [],
+          );
+        }
         return;
       }
       final snappedToFile = chosen.dx.round();
@@ -1246,32 +1371,6 @@ class BoardController extends StateNotifier<BoardState> {
             _isCommittingAnim = false;
           }
         });
-      } else {
-        // Try to select a different piece
-        if (piece.isNotEmpty) {
-          final isRedPiece = piece == piece.toUpperCase();
-          final isRedToMove = FenParser.getSideToMove(state.fen) == 'w';
-          AppLogger().log('Move invalid. Try reselect piece=$piece');
-          if ((isRedToMove && isRedPiece) || (!isRedToMove && !isRedPiece)) {
-            final possibleMoves = _calculatePossibleMoves(file, rank, board);
-            AppLogger().log(
-              'Reselected. possibleMoves=${possibleMoves.length}',
-            );
-            state = state.copyWith(
-              selectedFile: file,
-              selectedRank: rank,
-              possibleMoves: possibleMoves,
-            );
-          }
-        } else {
-          // Clicked on empty square, deselect
-          AppLogger().log('Clicked empty square. Deselect.');
-          state = state.copyWith(
-            selectedFile: null,
-            selectedRank: null,
-            possibleMoves: [],
-          );
-        }
       }
     }
   }
@@ -1402,9 +1501,11 @@ class BoardController extends StateNotifier<BoardState> {
           state.selectedEngine == 'EleEye' && _engine!.protocol == 'UCCI';
       final isPikafish = state.selectedEngine == 'Pikafish';
 
-      if (isEleEye && state.multiPv > 1) {
-        // EleEye path: emulate MultiPV using iterative banmoves
-        await _analyzePositionEleEye(movetimeMs);
+      if (isEleEye) {
+        // EleEye only supports single PV - ignore MultiPV setting
+        AppLogger().log('EleEye single PV analysis (MultiPV not supported)');
+        await _engine!.setPosition(state.fen, currentMoves());
+        await _engine!.go(movetimeMs: movetimeMs ?? 1000);
       } else if (isPikafish) {
         // Pikafish: use startpos if game from initial position, otherwise FEN
         if (_isGameFromInitialPosition()) {
@@ -1431,48 +1532,6 @@ class BoardController extends StateNotifier<BoardState> {
       state = state.copyWith(isEngineThinking: false);
       rethrow;
     }
-  }
-
-  // EleEye-specific MultiPV analysis using banmoves
-  Future<void> _analyzePositionEleEye(int? movetimeMs) async {
-    _eleEyeBanMode = true;
-    _bannedFirstMoves.clear();
-
-    for (_banIteration = 0; _banIteration < state.multiPv; _banIteration++) {
-      // Reposition resets previous ban list inside engine
-      await _engine!.setPosition(state.fen, currentMoves());
-
-      if (_bannedFirstMoves.isNotEmpty) {
-        // Example: "banmoves b2b9 h2h9"
-        final cmd = 'banmoves ${_bannedFirstMoves.join(' ')}';
-        _engine!.send(cmd);
-      }
-
-      // Wait for a single bestmove to mark the end of this cycle
-      _bestMoveOnce = Completer<void>();
-      await _engine!.go(movetimeMs: movetimeMs ?? 1000);
-      try {
-        await _bestMoveOnce!.future.timeout(const Duration(seconds: 5));
-      } catch (_) {
-        // If EleEye fails to reply, break the loop
-        break;
-      }
-
-      // Capture first move of just-finished PV index
-      final idx = _banIteration + 1;
-      final bl = state.bestLines.firstWhere(
-        (e) => e.index == idx,
-        orElse: () => const BestLine(0, 0, 0, []),
-      );
-      if (bl.firstMove.isNotEmpty) {
-        _bannedFirstMoves.add(bl.firstMove);
-      } else {
-        break; // no move parsed; stop early
-      }
-    }
-
-    // Restore flags
-    _eleEyeBanMode = false;
   }
 
   List<Offset> _calculatePossibleMoves(
@@ -1532,6 +1591,10 @@ class BoardController extends StateNotifier<BoardState> {
       redToMove: true,
       bestLines: const [], // Clear previous analysis arrows
       clearSelection: true,
+      setupMoveHistory: [
+        '9/9/9/9/9/9/9/9/9/9 w',
+      ], // Initialize with empty board
+      setupMoveHistoryPointer: 0,
     );
   }
 
@@ -1560,8 +1623,15 @@ class BoardController extends StateNotifier<BoardState> {
 
   void selectSetupPiece(String piece) {
     if (state.setupPieces[piece] != null && state.setupPieces[piece]! > 0) {
-      AppLogger().log('Selected setup piece: $piece');
-      state = state.copyWith(selectedSetupPiece: piece);
+      // If clicking the same piece that's already selected, deselect it
+      if (state.selectedSetupPiece == piece) {
+        AppLogger().log('Deselected setup piece: $piece');
+        state = state.copyWith(selectedSetupPiece: null);
+      } else {
+        // Select the new piece
+        AppLogger().log('Selected setup piece: $piece');
+        state = state.copyWith(selectedSetupPiece: piece);
+      }
     }
   }
 
@@ -1587,12 +1657,26 @@ class BoardController extends StateNotifier<BoardState> {
     newSetupPieces[piece] = (newSetupPieces[piece] ?? 0) - 1;
 
     AppLogger().log('Placed $piece at ($file, $rank)');
+
+    // Add to setup move history
+    final newHistory = List<String>.from(state.setupMoveHistory);
+    // Remove any future history if we're not at the end
+    if (state.setupMoveHistoryPointer < newHistory.length - 1) {
+      newHistory.removeRange(
+        state.setupMoveHistoryPointer + 1,
+        newHistory.length,
+      );
+    }
+    newHistory.add(newFen);
+
     state = state.copyWith(
       fen: newFen,
       setupPieces: newSetupPieces,
       selectedSetupPiece: newSetupPieces[piece] == 0
           ? null
           : state.selectedSetupPiece,
+      setupMoveHistory: newHistory,
+      setupMoveHistoryPointer: newHistory.length - 1,
     );
   }
 
@@ -1674,6 +1758,97 @@ class BoardController extends StateNotifier<BoardState> {
             'rheakaehr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RHEAKAEHR w - - 0 1' ||
         state.setupFen ==
             'rheakaehr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RHEAKAEHR';
+  }
+
+  // Setup navigation methods
+  bool canUndoSetupMove() {
+    return state.isSetupMode && state.setupMoveHistory.isNotEmpty;
+  }
+
+  bool canRedoSetupMove() {
+    return state.isSetupMode &&
+        state.setupMoveHistoryPointer < state.setupMoveHistory.length - 1;
+  }
+
+  void undoSetupMove() {
+    if (!canUndoSetupMove()) return;
+
+    AppLogger().log('Undoing setup move');
+    final newPointer = state.setupMoveHistoryPointer - 1;
+    final newFen = state.setupMoveHistory[newPointer];
+
+    // Calculate which pieces need to be restored to the selection bar
+    final currentBoard = FenParser.parseBoard(state.fen);
+    final previousBoard = FenParser.parseBoard(newFen);
+
+    // Find pieces that were removed (present in current but not in previous)
+    final newSetupPieces = Map<String, int>.from(state.setupPieces);
+
+    for (int rank = 0; rank < 10; rank++) {
+      for (int file = 0; file < 9; file++) {
+        final currentPiece = currentBoard[rank][file];
+        final previousPiece = previousBoard[rank][file];
+
+        // If piece was removed (was in current, not in previous)
+        if (currentPiece.isNotEmpty && previousPiece.isEmpty) {
+          newSetupPieces[currentPiece] =
+              (newSetupPieces[currentPiece] ?? 0) + 1;
+          AppLogger().log('Restored piece $currentPiece to selection bar');
+        }
+      }
+    }
+
+    state = state.copyWith(
+      setupMoveHistoryPointer: newPointer,
+      fen: newFen,
+      setupPieces: newSetupPieces,
+    );
+  }
+
+  void redoSetupMove() {
+    if (!canRedoSetupMove()) return;
+
+    AppLogger().log('Redoing setup move');
+    final newPointer = state.setupMoveHistoryPointer + 1;
+    final newFen = state.setupMoveHistory[newPointer];
+
+    // Calculate which pieces need to be removed from the selection bar
+    final currentBoard = FenParser.parseBoard(state.fen);
+    final nextBoard = FenParser.parseBoard(newFen);
+
+    // Find pieces that were added (present in next but not in current)
+    final newSetupPieces = Map<String, int>.from(state.setupPieces);
+
+    for (int rank = 0; rank < 10; rank++) {
+      for (int file = 0; file < 9; file++) {
+        final currentPiece = currentBoard[rank][file];
+        final nextPiece = nextBoard[rank][file];
+
+        // If piece was added (was not in current, is in next)
+        if (currentPiece.isEmpty && nextPiece.isNotEmpty) {
+          newSetupPieces[nextPiece] = (newSetupPieces[nextPiece] ?? 0) - 1;
+          AppLogger().log('Removed piece $nextPiece from selection bar');
+        }
+      }
+    }
+
+    state = state.copyWith(
+      setupMoveHistoryPointer: newPointer,
+      fen: newFen,
+      setupPieces: newSetupPieces,
+    );
+  }
+
+  void resetSetupBoard() {
+    if (!state.isSetupMode) return;
+
+    AppLogger().log('Resetting setup board');
+    state = state.copyWith(
+      fen: '9/9/9/9/9/9/9/9/9/9 w', // Empty board
+      setupMoveHistory: ['9/9/9/9/9/9/9/9/9/9 w'],
+      setupMoveHistoryPointer: 0,
+      selectedSetupPiece: null,
+    );
   }
 
   @override

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:process_run/shell.dart';
 import 'features/board/board_controller.dart';
 import 'features/board/board_view.dart';
-import 'features/board/controls.dart';
 import 'features/board/best_moves_panel.dart';
 import 'widgets/side_selection_dialog.dart';
+import 'core/logger.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +37,12 @@ class XiangqiHomePage extends ConsumerStatefulWidget {
 
 class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
   bool _gameInitialized = false;
+  String _gameMode = 'normal'; // 'normal' or 'vs_engine'
+  int _engineThinkingTime = 10; // seconds
+  int _bestMovesCount = 1;
+  String _selectedEngine = 'EleEye';
+  int _engineDepth = 16;
+  bool _showBestMoves = true; // Show/hide best moves panel
 
   @override
   void initState() {
@@ -75,60 +82,392 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: const Text('Xiangqi Flutter'),
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.info),
+            icon: Icon(
+              _showBestMoves ? Icons.visibility : Icons.visibility_off,
+            ),
             onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('About'),
-                  content: const Text(
-                    'Xiangqi Flutter App\n\n'
-                    'Features:\n'
-                    '• Engine integration (Pikafish UCI, EleEye UCCI)\n'
-                    '• MultiPV analysis (1-3 best moves)\n'
-                    '• Move history navigation\n'
-                    '• Interactive board\n'
-                    '• Real-time engine analysis\n\n'
-                    'Phase 1: Basic functionality\n'
-                    'Phase 2: Full piece movement and validation',
+              setState(() {
+                _showBestMoves = !_showBestMoves;
+              });
+            },
+            tooltip: _showBestMoves ? 'Ẩn Best Moves' : 'Hiện Best Moves',
+          ),
+        ],
+      ),
+      drawer: _buildDrawer(),
+      body: _gameInitialized
+          ? Row(
+              children: [
+                // Left side - Board (phóng to hơn)
+                Expanded(
+                  flex: _showBestMoves
+                      ? 4
+                      : 6, // Phóng to hơn khi ẩn best moves
+                  child: Consumer(
+                    builder: (context, ref, child) {
+                      final state = ref.watch(boardControllerProvider);
+
+                      // In setup mode, only show board without controls
+                      if (state.isSetupMode) {
+                        return BoardView(showBestMoves: _showBestMoves);
+                      }
+
+                      // In normal mode, show board with controls
+                      return Column(
+                        children: [
+                          // Board takes most of the space
+                          Expanded(
+                            flex: 6,
+                            child: BoardView(showBestMoves: _showBestMoves),
+                          ),
+                          // Minimal controls
+                          Expanded(flex: 1, child: _buildMinimalControls()),
+                        ],
+                      );
+                    },
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('OK'),
-                    ),
-                  ],
                 ),
-              );
+                // Right side - Best Moves Panel (chỉ hiện khi _showBestMoves = true)
+                if (_showBestMoves) Expanded(flex: 1, child: BestMovesPanel()),
+              ],
+            )
+          : const Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  Widget _buildDrawer() {
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          const DrawerHeader(
+            decoration: BoxDecoration(color: Colors.brown),
+            child: Text(
+              'Menu',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.sports_esports),
+            title: const Text('Chế độ chơi bình thường'),
+            selected: _gameMode == 'normal',
+            onTap: () {
+              setState(() {
+                _gameMode = 'normal';
+              });
+              // Disable vs engine mode
+              final controller = ref.read(boardControllerProvider.notifier);
+              controller.setVsEngineMode(false);
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.smart_toy),
+            title: const Text('Đánh với máy'),
+            subtitle: const Text('Sử dụng engine EleEye'),
+            selected: _gameMode == 'vs_engine',
+            onTap: () {
+              setState(() {
+                _gameMode = 'vs_engine';
+              });
+              // Enable vs engine mode
+              final controller = ref.read(boardControllerProvider.notifier);
+              controller.setVsEngineMode(true);
+              Navigator.pop(context);
+            },
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.settings),
+            title: const Text('Cài đặt engine'),
+            onTap: () {
+              Navigator.pop(context);
+              _showEngineSettingsDialog();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.grid_on),
+            title: const Text('Setup Board'),
+            onTap: () {
+              Navigator.pop(context);
+              _showSetupBoardDialog();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.bug_report),
+            title: const Text('Log lỗi'),
+            onTap: () {
+              Navigator.pop(context);
+              _openLogsFolder();
+            },
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.info),
+            title: const Text('About'),
+            onTap: () {
+              Navigator.pop(context);
+              _showAboutDialog();
             },
           ),
         ],
       ),
-      body: _gameInitialized
-          ? const Row(
+    );
+  }
+
+  Widget _buildMinimalControls() {
+    return Consumer(
+      builder: (context, ref, child) {
+        final state = ref.watch(boardControllerProvider);
+
+        // Hide controls when in setup mode
+        if (state.isSetupMode) {
+          return const SizedBox.shrink();
+        }
+
+        return Container(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton(
+                onPressed: () {
+                  final controller = ref.read(boardControllerProvider.notifier);
+                  controller.back();
+                },
+                child: const Text('Back'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final controller = ref.read(boardControllerProvider.notifier);
+                  controller.reset();
+                },
+                child: const Text('Reset'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final controller = ref.read(boardControllerProvider.notifier);
+                  controller.next();
+                },
+                child: const Text('Next'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showEngineSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Cài đặt Engine'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                // Left side - Board and Controls
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    children: [
-                      // Give the board most of the height
-                      Expanded(flex: 5, child: BoardView()),
-                      // Controls take less height to keep board large
-                      Expanded(
-                        flex: 2,
-                        child: SingleChildScrollView(child: Controls()),
-                      ),
-                    ],
-                  ),
+                // Engine selection
+                Row(
+                  children: [
+                    const Text('Engine: '),
+                    DropdownButton<String>(
+                      value: _selectedEngine,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'Pikafish',
+                          child: Text('Pikafish'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'EleEye',
+                          child: Text('EleEye'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedEngine = value ?? 'EleEye';
+                        });
+                      },
+                    ),
+                  ],
                 ),
-                // Right side - Best Moves Panel
-                Expanded(flex: 2, child: BestMovesPanel()),
+                const SizedBox(height: 16),
+
+                // Best moves count
+                Text('Số lượng bestmove: $_bestMovesCount'),
+                Slider(
+                  value: _bestMovesCount.toDouble(),
+                  min: 1,
+                  max: 3,
+                  divisions: 2,
+                  onChanged: _selectedEngine == 'EleEye'
+                      ? null
+                      : (value) {
+                          setState(() {
+                            _bestMovesCount = value.round();
+                          });
+                        },
+                ),
+                if (_selectedEngine == 'EleEye')
+                  const Text(
+                    'EleEye chỉ hỗ trợ 1 bestmove',
+                    style: TextStyle(color: Colors.orange, fontSize: 12),
+                  ),
+                const SizedBox(height: 16),
+
+                // Thinking time
+                Text('Thời gian suy nghĩ: ${_engineThinkingTime}s'),
+                Slider(
+                  value: _engineThinkingTime.toDouble(),
+                  min: 3,
+                  max: 60,
+                  divisions: 57,
+                  onChanged: (value) {
+                    setState(() {
+                      _engineThinkingTime = value.round();
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+
+                // Engine depth
+                Text('Độ sâu phân tích: $_engineDepth'),
+                Slider(
+                  value: _engineDepth.toDouble(),
+                  min: 1,
+                  max: 30,
+                  divisions: 29,
+                  onChanged: (value) {
+                    setState(() {
+                      _engineDepth = value.round();
+                    });
+                  },
+                ),
               ],
-            )
-          : const Center(child: CircularProgressIndicator()),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Hủy'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                // Apply settings sequentially to avoid conflicts
+                final controller = ref.read(boardControllerProvider.notifier);
+
+                // Show loading indicator
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) =>
+                      const Center(child: CircularProgressIndicator()),
+                );
+
+                try {
+                  // Step 1: Switch engine first
+                  await controller.switchEngine(_selectedEngine);
+
+                  // Step 2: Set MultiPV after engine is ready
+                  await controller.setMultiPv(_bestMovesCount);
+
+                  // Step 3: Store depth for later use
+                  _engineDepth = _engineDepth;
+
+                  // Close loading dialog
+                  Navigator.of(context).pop();
+
+                  // Close settings dialog
+                  Navigator.of(context).pop();
+
+                  // Show success message
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Cài đặt engine đã được áp dụng thành công!',
+                      ),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                } catch (e) {
+                  // Close loading dialog
+                  Navigator.of(context).pop();
+
+                  // Show error message
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Lỗi khi áp dụng cài đặt: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Áp dụng'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSetupBoardDialog() {
+    final controller = ref.read(boardControllerProvider.notifier);
+    controller.enterSetupMode();
+  }
+
+  void _openLogsFolder() async {
+    try {
+      final path = await AppLogger().getLogsDirectoryPath();
+      // Try to open with system file explorer
+      try {
+        final shell = Shell();
+        if (Theme.of(context).platform == TargetPlatform.windows) {
+          await shell.run('start "" "$path"');
+        } else if (Theme.of(context).platform == TargetPlatform.macOS) {
+          await shell.run('open "$path"');
+        } else {
+          await shell.run('xdg-open "$path"');
+        }
+      } catch (_) {}
+    } catch (_) {}
+  }
+
+  void _showAboutDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('About'),
+        content: const Text(
+          'Xiangqi Flutter App\n\n'
+          'Features:\n'
+          '• Engine integration (Pikafish UCI, EleEye UCCI)\n'
+          '• MultiPV analysis (1-3 best moves)\n'
+          '• Move history navigation\n'
+          '• Interactive board\n'
+          '• Real-time engine analysis\n\n'
+          'Phase 1: Basic functionality\n'
+          'Phase 2: Full piece movement and validation',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -20,6 +20,11 @@ class EngineParser {
     //  - "info depth 8 score 0 pv b2b9 ..." (EleEye without 'cp' and 'multipv')
     if (!line.startsWith('info')) return null;
 
+    // Debug logging for EleEye
+    if (line.contains('score 0') || line.contains('score cp 0')) {
+      print('DEBUG: EleEye info line with score 0: $line');
+    }
+
     final parts = line.split(' ');
     int multipv = 1; // default when missing
     int? depth;
@@ -73,11 +78,22 @@ class EngineParser {
       }
     }
 
-    if (depth == null || score == null || pvMoves.isEmpty) {
+    if (depth == null || pvMoves.isEmpty) {
       return null;
     }
 
-    return PvInfo(multipv, depth, score, pvMoves);
+    // If score is null, default to 0 (but still return the PV)
+    // This handles cases where EleEye doesn't provide score evaluation
+    final finalScore = score ?? 0;
+
+    // Debug logging for problematic cases
+    if (finalScore == 0 && pvMoves.isNotEmpty) {
+      print(
+        'DEBUG: EleEye PV with score 0: depth=$depth, moves=${pvMoves.join(' ')}',
+      );
+    }
+
+    return PvInfo(multipv, depth, finalScore, pvMoves);
   }
 
   // Parse engine identification

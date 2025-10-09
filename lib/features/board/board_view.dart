@@ -5,7 +5,9 @@ import 'board_controller.dart';
 import '../../core/fen.dart';
 
 class BoardView extends ConsumerWidget {
-  const BoardView({super.key});
+  final bool showBestMoves;
+
+  const BoardView({super.key, this.showBestMoves = true});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -81,10 +83,11 @@ class BoardView extends ConsumerWidget {
                                       fit: BoxFit.fill,
                                     ),
                                     // Best move arrows overlay should appear BELOW pieces
-                                    _buildBestMoveArrows(
-                                      state,
-                                      constraints.biggest,
-                                    ),
+                                    if (showBestMoves)
+                                      _buildBestMoveArrows(
+                                        state,
+                                        constraints.biggest,
+                                      ),
                                     // Pieces overlay
                                     _buildPiecesOverlay(
                                       state,
@@ -120,34 +123,37 @@ class BoardView extends ConsumerWidget {
                 ),
               ],
 
-              const SizedBox(height: 16),
+              // Only show move history when not in setup mode
+              if (!state.isSetupMode) ...[
+                const SizedBox(height: 16),
 
-              // Move history
-              Container(
-                height: 100,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Move History:',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: Text(
-                          state.moves.take(state.pointer).join(' '),
-                          style: const TextStyle(fontFamily: 'monospace'),
+                // Move history
+                Container(
+                  height: 100,
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Move History:',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: Text(
+                            state.moves.take(state.pointer).join(' '),
+                            style: const TextStyle(fontFamily: 'monospace'),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -332,7 +338,7 @@ class BoardView extends ConsumerWidget {
     final asset = _getPieceAsset(anim.piece);
     if (asset == null) return const SizedBox.shrink();
 
-    final pieceSize = (cellWidth * 0.7).clamp(25.0, 50.0);
+    final pieceSize = (cellWidth * 0.8).clamp(30.0, 60.0);
 
     // Calculate display positions based on isRedAtBottom
     final fromFile = anim.fromFile;
@@ -374,7 +380,7 @@ class BoardView extends ConsumerWidget {
     final pieceAsset = _getPieceAsset(piece);
     if (pieceAsset == null) return const SizedBox.shrink();
 
-    final pieceSize = (cellWidth * 0.7).clamp(25.0, 50.0);
+    final pieceSize = (cellWidth * 0.8).clamp(30.0, 60.0);
 
     return Positioned(
       left: boardOffsetX + file * cellWidth + (cellWidth - pieceSize) / 2,
@@ -397,30 +403,6 @@ class BoardView extends ConsumerWidget {
         ),
       ),
     );
-  }
-
-  String? _getPieceAsset(String piece) {
-    final isRed = piece == piece.toUpperCase();
-    final color = isRed ? 'red' : 'black';
-
-    switch (piece.toLowerCase()) {
-      case 'r':
-        return 'assets/pieces/xiangqi/${color}_rook.svg';
-      case 'h':
-        return 'assets/pieces/xiangqi/${color}_knight.svg';
-      case 'e':
-        return 'assets/pieces/xiangqi/${color}_bishop.svg';
-      case 'a':
-        return 'assets/pieces/xiangqi/${color}_advisor.svg';
-      case 'k':
-        return 'assets/pieces/xiangqi/${color}_king.svg';
-      case 'c':
-        return 'assets/pieces/xiangqi/${color}_cannon.svg';
-      case 'p':
-        return 'assets/pieces/xiangqi/${color}_pawn.svg';
-      default:
-        return null;
-    }
   }
 
   void _onBoardTap(
@@ -647,93 +629,192 @@ class _ArrowsPainter extends CustomPainter {
 // Setup mode UI
 Widget _buildSetupModeUI(BoardState state, BoardController controller) {
   return Expanded(
-    child: Column(
-      children: [
-        // Setup controls
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.blue[50],
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Setup Mode',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  Row(
-                    children: [
-                      ElevatedButton(
-                        onPressed: controller.startGameFromSetup,
-                        child: const Text('Start Game'),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                        onPressed: controller.exitSetupMode,
-                        child: const Text('Exit Setup'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // Piece selection
-              _buildPieceSelection(state, controller),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        // Setup board
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final size = constraints.biggest;
-              final dim = size.shortestSide;
-              return Center(
-                child: SizedBox(
-                  width: dim,
-                  height: dim,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.black, width: 2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        return Stack(
-                          children: [
-                            // SVG Board Background
-                            SvgPicture.asset(
-                              'assets/boards/xiangqi_gmchess_wood.svg',
-                              fit: BoxFit.fill,
-                            ),
-                            // Setup pieces overlay
-                            _buildSetupPiecesOverlay(
-                              state,
-                              constraints.biggest,
-                            ),
-                            // Gesture detector for setup
-                            GestureDetector(
-                              onTapDown: (details) => _onSetupBoardTap(
-                                context,
-                                details,
-                                state,
-                                controller,
-                              ),
-                              child: Container(color: Colors.transparent),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
+    child: Container(
+      padding: const EdgeInsets.all(4),
+      child: Column(
+        children: [
+          // Setup controls - compact header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Setup Mode',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
-              );
-            },
+                Row(
+                  children: [
+                    // Always show navigation buttons in setup mode
+                    ElevatedButton(
+                      onPressed: controller.canUndoSetupMove()
+                          ? controller.undoSetupMove
+                          : null,
+                      child: const Text('Back'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: controller.resetSetupBoard,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red[100],
+                        foregroundColor: Colors.red[800],
+                      ),
+                      child: const Text('Reset'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: controller.canRedoSetupMove()
+                          ? controller.redoSetupMove
+                          : null,
+                      child: const Text('Next'),
+                    ),
+                    const SizedBox(width: 16),
+                    ElevatedButton(
+                      onPressed: controller.startGameFromSetup,
+                      child: const Text('Start Game'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: controller.exitSetupMode,
+                      child: const Text('Exit Setup'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Main setup area with board and pieces
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final size = constraints.biggest;
+                final boardHeight =
+                    size.height *
+                    0.7; // Board takes 70% of height to give more space to pieces
+                final pieceAreaHeight =
+                    (size.height - boardHeight) /
+                    2; // Space for pieces above and below
+
+                return Column(
+                  children: [
+                    // Top pieces - Red pieces
+                    SizedBox(
+                      height: pieceAreaHeight,
+                      child: _buildTopBottomPieces(state, controller, 'top'),
+                    ),
+                    // Center board - reasonable width
+                    Expanded(
+                      child: Center(
+                        child: SizedBox(
+                          width:
+                              size.width *
+                              0.35, // Use 35% of available width to give more space to pieces
+                          height: boardHeight,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.black, width: 2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                return Stack(
+                                  children: [
+                                    // SVG Board Background
+                                    SvgPicture.asset(
+                                      'assets/boards/xiangqi_gmchess_wood.svg',
+                                      fit: BoxFit.fill,
+                                    ),
+                                    // Setup pieces overlay
+                                    _buildSetupPiecesOverlay(
+                                      state,
+                                      constraints.biggest,
+                                    ),
+                                    // Gesture detector for setup
+                                    GestureDetector(
+                                      onTapDown: (details) => _onSetupBoardTap(
+                                        context,
+                                        details,
+                                        state,
+                                        controller,
+                                      ),
+                                      child: Container(
+                                        color: Colors.transparent,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Bottom pieces - Black pieces
+                    SizedBox(
+                      height: pieceAreaHeight,
+                      child: _buildTopBottomPieces(state, controller, 'bottom'),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildTopBottomPieces(
+  BoardState state,
+  BoardController controller,
+  String position,
+) {
+  final isTop = position == 'top';
+  // Red pieces position depends on isRedAtBottom setting
+  final isRed = state.isRedAtBottom ? !isTop : isTop;
+
+  final pieces = state.setupPieces.entries
+      .where(
+        (entry) =>
+            entry.value > 0 &&
+            ((isRed && entry.key == entry.key.toUpperCase()) ||
+                (!isRed && entry.key == entry.key.toLowerCase())),
+      )
+      .toList();
+
+  return Container(
+    padding: const EdgeInsets.all(4),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          isRed ? 'Quân Đỏ' : 'Quân Đen',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        const SizedBox(height: 4),
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: pieces
+                  .map(
+                    (entry) => _buildTopBottomPieceButton(
+                      entry.key,
+                      entry.value,
+                      state,
+                      controller,
+                      isTop,
+                    ),
+                  )
+                  .toList(),
+            ),
           ),
         ),
       ],
@@ -741,68 +822,119 @@ Widget _buildSetupModeUI(BoardState state, BoardController controller) {
   );
 }
 
-Widget _buildPieceSelection(BoardState state, BoardController controller) {
-  return Wrap(
-    spacing: 6,
-    runSpacing: 6,
-    children: state.setupPieces.entries.where((entry) => entry.value > 0).map((
-      entry,
-    ) {
-      final piece = entry.key;
-      final count = entry.value;
-      final isSelected = state.selectedSetupPiece == piece;
+Widget _buildTopBottomPieceButton(
+  String piece,
+  int count,
+  BoardState state,
+  BoardController controller,
+  bool isTop,
+) {
+  final isSelected = state.selectedSetupPiece == piece;
+  final pieceAsset = _getPieceAsset(piece);
 
-      return GestureDetector(
-        onTap: () => controller.selectSetupPiece(piece),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color: isSelected ? Colors.blue : Colors.grey[200],
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: isSelected ? Colors.blue : Colors.grey,
-              width: 1.5,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
+  return GestureDetector(
+    onTap: () => controller.selectSetupPiece(piece),
+    child: Container(
+      width: 80,
+      height: 80,
+      margin: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: isSelected ? Colors.blue : Colors.grey[200],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isSelected ? Colors.blue : Colors.grey,
+          width: 2,
+        ),
+      ),
+      child: Stack(
+        children: [
+          if (pieceAsset != null)
+            Center(child: SvgPicture.asset(pieceAsset, width: 55, height: 55))
+          else
+            Center(
+              child: Text(
                 piece,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 22,
                   fontWeight: FontWeight.bold,
                   color: isSelected ? Colors.white : Colors.black,
                 ),
               ),
-              const SizedBox(width: 3),
-              Text(
-                '($count)',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: isSelected ? Colors.white : Colors.grey[600],
+            ),
+          if (count > 1)
+            Positioned(
+              top: 2,
+              right: 2,
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                child: Text(
+                  count.toString(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
               ),
-            ],
-          ),
-        ),
-      );
-    }).toList(),
+            ),
+        ],
+      ),
+    ),
   );
 }
 
 Widget _buildSetupPiecesOverlay(BoardState state, Size boardSize) {
   final cellWidth = boardSize.width / 9;
   final cellHeight = boardSize.height / 10;
+  final board = FenParser.parseBoard(state.fen);
 
-  return CustomPaint(
-    size: boardSize,
-    painter: _SetupPiecesPainter(
-      fen: state.fen,
-      cellWidth: cellWidth,
-      cellHeight: cellHeight,
-    ),
+  return Stack(
+    children: [
+      // Draw pieces using SVG images
+      ..._buildSetupPieces(board, state, cellWidth, cellHeight),
+    ],
   );
+}
+
+List<Widget> _buildSetupPieces(
+  List<List<String>> board,
+  BoardState state,
+  double cellWidth,
+  double cellHeight,
+) {
+  List<Widget> pieces = [];
+
+  for (int rank = 0; rank < 10; rank++) {
+    for (int file = 0; file < 9; file++) {
+      final piece = board[rank][file];
+      if (piece.isNotEmpty) {
+        final pieceAsset = _getPieceAsset(piece);
+        if (pieceAsset != null) {
+          final pieceSize = (cellWidth * 0.8).clamp(30.0, 60.0);
+
+          pieces.add(
+            Positioned(
+              left: file * cellWidth + (cellWidth - pieceSize) / 2,
+              top: rank * cellHeight + (cellHeight - pieceSize) / 2,
+              child: SvgPicture.asset(
+                pieceAsset,
+                width: pieceSize,
+                height: pieceSize,
+              ),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  return pieces;
 }
 
 void _onSetupBoardTap(
@@ -830,59 +962,26 @@ void _onSetupBoardTap(
   }
 }
 
-class _SetupPiecesPainter extends CustomPainter {
-  final String fen;
-  final double cellWidth;
-  final double cellHeight;
+String? _getPieceAsset(String piece) {
+  final isRed = piece == piece.toUpperCase();
+  final color = isRed ? 'red' : 'black';
 
-  _SetupPiecesPainter({
-    required this.fen,
-    required this.cellWidth,
-    required this.cellHeight,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final board = FenParser.parseBoard(fen);
-
-    for (int rank = 0; rank < 10; rank++) {
-      for (int file = 0; file < 9; file++) {
-        final piece = board[rank][file];
-        if (piece.isNotEmpty) {
-          final x = file * cellWidth + cellWidth / 2;
-          final y = rank * cellHeight + cellHeight / 2;
-
-          final paint = Paint()
-            ..color = piece == piece.toUpperCase() ? Colors.red : Colors.black
-            ..style = PaintingStyle.fill;
-
-          canvas.drawCircle(Offset(x, y), cellWidth * 0.3, paint);
-
-          final textPainter = TextPainter(
-            text: TextSpan(
-              text: piece,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: cellWidth * 0.4,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            textDirection: TextDirection.ltr,
-          );
-          textPainter.layout();
-          textPainter.paint(
-            canvas,
-            Offset(x - textPainter.width / 2, y - textPainter.height / 2),
-          );
-        }
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SetupPiecesPainter oldDelegate) {
-    return oldDelegate.fen != fen ||
-        oldDelegate.cellWidth != cellWidth ||
-        oldDelegate.cellHeight != cellHeight;
+  switch (piece.toLowerCase()) {
+    case 'r':
+      return 'assets/pieces/xiangqi/${color}_rook.svg';
+    case 'h':
+      return 'assets/pieces/xiangqi/${color}_knight.svg';
+    case 'e':
+      return 'assets/pieces/xiangqi/${color}_bishop.svg';
+    case 'a':
+      return 'assets/pieces/xiangqi/${color}_advisor.svg';
+    case 'k':
+      return 'assets/pieces/xiangqi/${color}_king.svg';
+    case 'c':
+      return 'assets/pieces/xiangqi/${color}_cannon.svg';
+    case 'p':
+      return 'assets/pieces/xiangqi/${color}_pawn.svg';
+    default:
+      return null;
   }
 }
