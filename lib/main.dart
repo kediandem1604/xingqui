@@ -6,6 +6,7 @@ import 'features/board/board_view.dart';
 import 'features/board/best_moves_panel.dart';
 import 'widgets/side_selection_dialog.dart';
 import 'core/logger.dart';
+import 'models/saved_game.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -220,6 +221,59 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
             },
             tooltip: _showBestMoves ? 'Ẩn Best Moves' : 'Hiện Best Moves',
           ),
+          // Replay controls
+          Consumer(
+            builder: (context, ref, child) {
+              final controller = ref.read(boardControllerProvider.notifier);
+
+              if (!controller.isReplayMode) {
+                return const SizedBox.shrink();
+              }
+
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.stop),
+                    onPressed: () {
+                      controller.stopReplay();
+                      setState(() {});
+                    },
+                    tooltip: 'Dừng replay',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.pause),
+                    onPressed: () {
+                      controller.toggleReplayPause();
+                      setState(() {});
+                    },
+                    tooltip: 'Tạm dừng/Tiếp tục',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.skip_previous),
+                    onPressed: () {
+                      controller.replayPrevious();
+                      setState(() {});
+                    },
+                    tooltip: 'Nước trước',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.skip_next),
+                    onPressed: () {
+                      controller.replayNext();
+                      setState(() {});
+                    },
+                    tooltip: 'Nước sau',
+                  ),
+                  Text(
+                    '${controller.replayIndex + 1}/${controller.totalReplayMoves}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              );
+            },
+          ),
         ],
       ),
       drawer: _buildDrawer(),
@@ -320,6 +374,24 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
               _showSetupBoardDialog();
             },
           ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.save),
+            title: const Text('Lưu ván cờ'),
+            onTap: () {
+              Navigator.pop(context);
+              _showSaveGameDialog();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.history),
+            title: const Text('Ván đã lưu'),
+            onTap: () {
+              Navigator.pop(context);
+              _showSavedGamesDialog();
+            },
+          ),
+          const Divider(),
           ListTile(
             leading: const Icon(Icons.bug_report),
             title: const Text('Log lỗi'),
@@ -558,6 +630,385 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
         }
       } catch (_) {}
     } catch (_) {}
+  }
+
+  // Show save game dialog
+  void _showSaveGameDialog() {
+    final controller = ref.read(boardControllerProvider.notifier);
+
+    if (!controller.canSaveCurrentGame) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không có nước đi nào để lưu!'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final nameController = TextEditingController();
+    final descriptionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Lưu ván cờ'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Tóm tắt: ${controller.currentGameSummary}'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Tên ván cờ',
+                hintText: 'Ví dụ: Ván cờ với bạn',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: descriptionController,
+              decoration: const InputDecoration(
+                labelText: 'Mô tả (tùy chọn)',
+                hintText: 'Ghi chú về ván cờ này...',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              if (name.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Vui lòng nhập tên ván cờ!'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+
+              // Check if name already exists
+              final savedGames = await controller.getSavedGames();
+              if (savedGames.any(
+                (game) => game.name.toLowerCase() == name.toLowerCase(),
+              )) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Tên ván cờ đã tồn tại!'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+
+              // Show loading
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) =>
+                    const Center(child: CircularProgressIndicator()),
+              );
+
+              try {
+                final success = await controller.saveCurrentGame(
+                  name,
+                  description: descriptionController.text.trim().isEmpty
+                      ? null
+                      : descriptionController.text.trim(),
+                );
+
+                Navigator.of(context).pop(); // Close loading
+                Navigator.of(context).pop(); // Close dialog
+
+                if (success) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Đã lưu ván cờ: $name'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Lỗi khi lưu ván cờ!'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                Navigator.of(context).pop(); // Close loading
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Lỗi: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Lưu'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Show saved games dialog
+  void _showSavedGamesDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ván đã lưu'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: FutureBuilder<List<SavedGame>>(
+            future: ref.read(boardControllerProvider.notifier).getSavedGames(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (snapshot.hasError) {
+                return Center(child: Text('Lỗi: ${snapshot.error}'));
+              }
+
+              final savedGames = snapshot.data ?? [];
+
+              if (savedGames.isEmpty) {
+                return const Center(child: Text('Chưa có ván cờ nào được lưu'));
+              }
+
+              return ListView.builder(
+                itemCount: savedGames.length,
+                itemBuilder: (context, index) {
+                  final game = savedGames[index];
+                  return Card(
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    child: ListTile(
+                      title: Text(game.name),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(game.gameSummary),
+                          Text(
+                            game.formattedDate,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          if (game.description != null)
+                            Text(
+                              game.description!,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        onSelected: (value) async {
+                          if (value == 'load') {
+                            Navigator.of(context).pop(); // Close dialog
+                            await _loadGame(game.id);
+                          } else if (value == 'replay') {
+                            Navigator.of(context).pop(); // Close dialog
+                            await _replayGame(game.id);
+                          } else if (value == 'delete') {
+                            await _deleteGame(game.id, game.name);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'load',
+                            child: Row(
+                              children: [
+                                Icon(Icons.play_arrow),
+                                SizedBox(width: 8),
+                                Text('Tải ván cờ'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'replay',
+                            child: Row(
+                              children: [
+                                Icon(Icons.replay),
+                                SizedBox(width: 8),
+                                Text('Mô phỏng lại'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Xóa',
+                                  style: TextStyle(color: Colors.red),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Đóng'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Replay a saved game
+  Future<void> _replayGame(String gameId) async {
+    final controller = ref.read(boardControllerProvider.notifier);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final savedGame = await controller.getSavedGames().then(
+        (games) => games.firstWhere((game) => game.id == gameId),
+      );
+
+      Navigator.of(context).pop(); // Close loading
+
+      if (savedGame.moves.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ván cờ này không có nước đi nào!'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // Start replay
+      await controller.startReplay(savedGame.moves);
+      setState(() {}); // Refresh UI to show replay controls
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Bắt đầu mô phỏng lại: ${savedGame.name}'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      Navigator.of(context).pop(); // Close loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  // Load a saved game
+  Future<void> _loadGame(String gameId) async {
+    final controller = ref.read(boardControllerProvider.notifier);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final success = await controller.loadSavedGame(gameId);
+      Navigator.of(context).pop(); // Close loading
+
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Đã tải ván cờ thành công!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Lỗi khi tải ván cờ!'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      Navigator.of(context).pop(); // Close loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lỗi: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  // Delete a saved game
+  Future<void> _deleteGame(String gameId, String gameName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Xác nhận xóa'),
+        content: Text('Bạn có chắc muốn xóa ván cờ "$gameName"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Xóa'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final controller = ref.read(boardControllerProvider.notifier);
+      final success = await controller.deleteSavedGame(gameId);
+
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã xóa ván cờ: $gameName'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        // Refresh the saved games dialog
+        _showSavedGamesDialog();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Lỗi khi xóa ván cờ!'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _showAboutDialog() {

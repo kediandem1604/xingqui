@@ -10,6 +10,8 @@ import '../../core/fen.dart';
 import '../../core/xiangqi_rules.dart';
 import '../../core/logger.dart';
 import '../../services/game_status_service.dart';
+import '../../services/saved_games_service.dart';
+import '../../models/saved_game.dart';
 import '../../widgets/game_notification.dart';
 
 // Best line information
@@ -703,6 +705,228 @@ class BoardController extends StateNotifier<BoardState> {
 
     // Always restart analysis with new depth
     await _analyzePosition();
+  }
+
+  // Save current game
+  Future<bool> saveCurrentGame(String name, {String? description}) async {
+    try {
+      AppLogger().log('Saving current game: $name');
+
+      final savedGame = SavedGame(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        name: name,
+        initialFen: state.fen,
+        moves: state.moves.take(state.pointer).toList(),
+        savedAt: DateTime.now(),
+        description: description,
+        winner: GameStatusService.getWinner(state.fen),
+        totalMoves: state.pointer,
+      );
+
+      final success = await SavedGamesService.instance.saveGame(savedGame);
+      if (success) {
+        AppLogger().log('Game saved successfully: $name');
+      } else {
+        AppLogger().log('Failed to save game: $name');
+      }
+      return success;
+    } catch (e) {
+      AppLogger().error('Error saving game: $name', e);
+      return false;
+    }
+  }
+
+  // Load a saved game
+  Future<bool> loadSavedGame(String gameId) async {
+    try {
+      AppLogger().log('Loading saved game: $gameId');
+
+      final savedGame = await SavedGamesService.instance.getGame(gameId);
+      if (savedGame == null) {
+        AppLogger().log('Game not found: $gameId');
+        return false;
+      }
+
+      // Stop current engine analysis
+      if (state.isEngineThinking) {
+        try {
+          _engine?.send('stop');
+        } catch (e) {
+          AppLogger().log('Failed to stop engine: $e');
+        }
+      }
+
+      // Reset to the saved game state
+      state = state.copyWith(
+        fen: savedGame.initialFen,
+        moves: savedGame.moves,
+        pointer: savedGame.moves.length,
+        redToMove: savedGame.moves.length % 2 == 0, // Even moves = red's turn
+        bestLines: [],
+        isEngineThinking: false,
+        engineError: null,
+        selectedFile: null,
+        selectedRank: null,
+        possibleMoves: const [],
+        pendingAnimation: null,
+      );
+
+      // Start analysis for the loaded position
+      await _analyzePosition();
+
+      AppLogger().log('Game loaded successfully: ${savedGame.name}');
+      return true;
+    } catch (e) {
+      AppLogger().error('Error loading game: $gameId', e);
+      return false;
+    }
+  }
+
+  // Get all saved games
+  Future<List<SavedGame>> getSavedGames() async {
+    return await SavedGamesService.instance.loadSavedGames();
+  }
+
+  // Delete a saved game
+  Future<bool> deleteSavedGame(String gameId) async {
+    return await SavedGamesService.instance.deleteGame(gameId);
+  }
+
+  // Check if current game can be saved (has moves)
+  bool get canSaveCurrentGame {
+    return state.pointer > 0;
+  }
+
+  // Get current game summary for saving
+  String get currentGameSummary {
+    final moveCount = state.pointer;
+    final winner = GameStatusService.getWinner(state.fen);
+    final result = winner != null
+        ? (winner == 'draw' ? 'Hòa' : '${winner == 'red' ? 'Đỏ' : 'Đen'} thắng')
+        : 'Đang chơi';
+
+    return '$moveCount nước đi - $result';
+  }
+
+  // Replay mode state
+  bool _isReplayMode = false;
+  Timer? _replayTimer;
+  int _replayIndex = 0;
+  List<String> _replayMoves = [];
+
+  bool get isReplayMode => _isReplayMode;
+  int get replayIndex => _replayIndex;
+  int get totalReplayMoves => _replayMoves.length;
+
+  // Start replay mode
+  Future<void> startReplay(List<String> moves, {int delayMs = 1000}) async {
+    if (moves.isEmpty) return;
+
+    AppLogger().log('Starting replay with ${moves.length} moves');
+
+    // Stop current engine analysis
+    if (state.isEngineThinking) {
+      try {
+        _engine?.send('stop');
+      } catch (e) {
+        AppLogger().log('Failed to stop engine: $e');
+      }
+    }
+
+    // Reset to initial position
+    state = state.copyWith(
+      fen: defaultXqFen,
+      moves: const [],
+      pointer: 0,
+      redToMove: true,
+      bestLines: [],
+      isEngineThinking: false,
+      engineError: null,
+      selectedFile: null,
+      selectedRank: null,
+      possibleMoves: const [],
+      pendingAnimation: null,
+    );
+
+    _isReplayMode = true;
+    _replayMoves = List.from(moves);
+    _replayIndex = 0;
+
+    // Start replay timer
+    _replayTimer?.cancel();
+    _replayTimer = Timer.periodic(Duration(milliseconds: delayMs), (timer) {
+      if (_replayIndex < _replayMoves.length) {
+        _playNextReplayMove();
+      } else {
+        _stopReplay();
+      }
+    });
+  }
+
+  // Stop replay mode
+  void _stopReplay() {
+    AppLogger().log('Stopping replay mode');
+    _replayTimer?.cancel();
+    _replayTimer = null;
+    _isReplayMode = false;
+    _replayIndex = 0;
+    _replayMoves.clear();
+  }
+
+  // Play next move in replay
+  void _playNextReplayMove() {
+    if (_replayIndex >= _replayMoves.length) return;
+
+    final move = _replayMoves[_replayIndex];
+    AppLogger().log(
+      'Replay move ${_replayIndex + 1}/${_replayMoves.length}: $move',
+    );
+
+    // Apply the move
+    applyMove(move);
+    _replayIndex++;
+  }
+
+  // Pause/resume replay
+  void toggleReplayPause() {
+    if (_replayTimer?.isActive == true) {
+      _replayTimer?.cancel();
+      AppLogger().log('Replay paused');
+    } else if (_isReplayMode && _replayIndex < _replayMoves.length) {
+      _replayTimer = Timer.periodic(const Duration(milliseconds: 1000), (
+        timer,
+      ) {
+        if (_replayIndex < _replayMoves.length) {
+          _playNextReplayMove();
+        } else {
+          _stopReplay();
+        }
+      });
+      AppLogger().log('Replay resumed');
+    }
+  }
+
+  // Skip to next move in replay
+  void replayNext() {
+    if (_isReplayMode && _replayIndex < _replayMoves.length) {
+      _playNextReplayMove();
+    }
+  }
+
+  // Skip to previous move in replay
+  void replayPrevious() {
+    if (_isReplayMode && _replayIndex > 0) {
+      _replayIndex--;
+      // Go back to previous position
+      back();
+    }
+  }
+
+  // Stop replay and return to normal mode
+  void stopReplay() {
+    _stopReplay();
+    // Start analysis for current position
+    _analyzePosition();
   }
 
   Future<void> applyMove(String moveUci) async {
