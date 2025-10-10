@@ -734,16 +734,109 @@ Widget _buildSetupModeUI(BoardState state, BoardController controller) {
                                       state,
                                       constraints.biggest,
                                     ),
-                                    // Gesture detector for setup
-                                    GestureDetector(
-                                      onTapDown: (details) => _onSetupBoardTap(
-                                        context,
-                                        details,
-                                        state,
-                                        controller,
-                                      ),
-                                      child: Container(
-                                        color: Colors.transparent,
+                                    // Drop position indicators
+                                    _buildDropIndicators(
+                                      constraints.biggest,
+                                      state,
+                                    ),
+                                    // Drag target for setup pieces - positioned exactly on the board
+                                    Positioned.fill(
+                                      child: GestureDetector(
+                                        onTapDown: (details) =>
+                                            _onSetupBoardTap(
+                                              context,
+                                              details,
+                                              state,
+                                              controller,
+                                            ),
+                                        child: DragTarget<String>(
+                                          onWillAccept: (data) {
+                                            print(
+                                              'DragTarget onWillAccept: $data',
+                                            );
+                                            return data != null;
+                                          },
+                                          onWillAcceptWithDetails: (details) {
+                                            print(
+                                              'DragTarget onWillAcceptWithDetails: ${details.data} at ${details.offset}',
+                                            );
+                                            return true;
+                                          },
+                                          onAcceptWithDetails: (details) {
+                                            // 1) Lấy render box của chính vùng DragTarget (board)
+                                            final renderBox =
+                                                context.findRenderObject()
+                                                    as RenderBox;
+
+                                            // 2) Đổi toạ độ global -> local theo board
+                                            final local = renderBox
+                                                .globalToLocal(details.offset);
+
+                                            // 3) Dùng local để tính file/rank
+                                            final cellWidth =
+                                                constraints.biggest.width / 9;
+                                            final cellHeight =
+                                                constraints.biggest.height / 10;
+
+                                            // Sử dụng pointerDragAnchorStrategy nên không cần điều chỉnh offset
+                                            final file = (local.dx / cellWidth)
+                                                .floor()
+                                                .clamp(0, 8);
+                                            final rank = (local.dy / cellHeight)
+                                                .floor()
+                                                .clamp(0, 9);
+
+                                            // Debug hữu ích
+                                            print(
+                                              'Board size: ${constraints.biggest}',
+                                            );
+                                            print(
+                                              'Cell: ${cellWidth}x${cellHeight}',
+                                            );
+                                            print(
+                                              'Raw global offset: ${details.offset}',
+                                            );
+                                            print('Local offset: $local');
+                                            print(
+                                              'Final position: file=$file, rank=$rank',
+                                            );
+
+                                            // Nếu có quân ở ô đích thì xoá trước
+                                            final board = FenParser.parseBoard(
+                                              state.fen,
+                                            );
+                                            if (board[rank][file].isNotEmpty) {
+                                              controller.removePieceFromBoard(
+                                                file,
+                                                rank,
+                                              );
+                                            }
+
+                                            // Đặt quân
+                                            controller.selectSetupPiece(
+                                              details.data,
+                                            );
+                                            controller.placePieceOnBoard(
+                                              file,
+                                              rank,
+                                            );
+                                          },
+                                          builder:
+                                              (
+                                                context,
+                                                candidateData,
+                                                rejectedData,
+                                              ) {
+                                                return Container(
+                                                  color:
+                                                      candidateData.isNotEmpty
+                                                      ? Colors.blue.withValues(
+                                                          alpha: 0.1,
+                                                        )
+                                                      : Colors.transparent,
+                                                );
+                                              },
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -832,35 +925,57 @@ Widget _buildTopBottomPieceButton(
   final isSelected = state.selectedSetupPiece == piece;
   final pieceAsset = _getPieceAsset(piece);
 
-  return GestureDetector(
-    onTap: () => controller.selectSetupPiece(piece),
-    child: Container(
+  return Draggable<String>(
+    data: piece,
+    dragAnchorStrategy: pointerDragAnchorStrategy,
+    onDragStarted: () {
+      print('TopBottom Draggable onDragStarted: $piece');
+    },
+    onDragEnd: (details) {
+      print(
+        'TopBottom Draggable onDragEnd: $piece, wasAccepted: ${details.wasAccepted}',
+      );
+    },
+    feedback: pieceAsset != null
+        ? Transform.translate(
+            offset: const Offset(
+              -35,
+              -35,
+            ), // Điều chỉnh để quân cờ ở giữa con trỏ
+            child: SvgPicture.asset(pieceAsset, width: 70, height: 70),
+          )
+        : Transform.translate(
+            offset: const Offset(-14, -14), // Điều chỉnh cho text
+            child: Text(
+              piece,
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
+          ),
+    childWhenDragging: Container(
       width: 80,
       height: 80,
       margin: const EdgeInsets.all(6),
       decoration: BoxDecoration(
-        color: isSelected ? Colors.blue : Colors.grey[200],
+        color: Colors.grey[300],
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isSelected ? Colors.blue : Colors.grey,
-          width: 2,
-        ),
+        border: Border.all(color: Colors.grey, width: 2),
       ),
       child: Stack(
         children: [
-          if (pieceAsset != null)
-            Center(child: SvgPicture.asset(pieceAsset, width: 55, height: 55))
-          else
-            Center(
-              child: Text(
-                piece,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: isSelected ? Colors.white : Colors.black,
-                ),
+          Center(
+            child: Text(
+              piece,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
               ),
             ),
+          ),
           if (count > 1)
             Positioned(
               top: 2,
@@ -884,6 +999,64 @@ Widget _buildTopBottomPieceButton(
               ),
             ),
         ],
+      ),
+    ),
+    child: GestureDetector(
+      onTap: () => controller.selectSetupPiece(piece),
+      child: Container(
+        width: 80,
+        height: 80,
+        margin: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue : Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? Colors.blue : Colors.grey,
+            width: 2,
+          ),
+        ),
+        child: Stack(
+          children: [
+            if (pieceAsset != null)
+              Center(child: SvgPicture.asset(pieceAsset, width: 55, height: 55))
+            else
+              Center(
+                child: Text(
+                  piece,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? Colors.white : Colors.black,
+                  ),
+                ),
+              ),
+            if (count > 1)
+              Positioned(
+                top: 2,
+                right: 2,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
+                  child: Text(
+                    count.toString(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     ),
   );
@@ -922,10 +1095,41 @@ List<Widget> _buildSetupPieces(
             Positioned(
               left: file * cellWidth + (cellWidth - pieceSize) / 2,
               top: rank * cellHeight + (cellHeight - pieceSize) / 2,
-              child: SvgPicture.asset(
-                pieceAsset,
-                width: pieceSize,
-                height: pieceSize,
+              child: Draggable<String>(
+                data: piece,
+                dragAnchorStrategy: pointerDragAnchorStrategy,
+                onDragStarted: () {
+                  print('Draggable onDragStarted: $piece');
+                },
+                onDragEnd: (details) {
+                  print(
+                    'Draggable onDragEnd: $piece, wasAccepted: ${details.wasAccepted}',
+                  );
+                },
+                feedback: Transform.translate(
+                  offset: Offset(
+                    -(pieceSize * 1.2) / 2,
+                    -(pieceSize * 1.2) / 2,
+                  ), // Điều chỉnh để quân cờ ở giữa con trỏ
+                  child: SvgPicture.asset(
+                    pieceAsset,
+                    width: pieceSize * 1.2,
+                    height: pieceSize * 1.2,
+                  ),
+                ),
+                childWhenDragging: Container(
+                  width: pieceSize,
+                  height: pieceSize,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.3),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                child: SvgPicture.asset(
+                  pieceAsset,
+                  width: pieceSize,
+                  height: pieceSize,
+                ),
               ),
             ),
           );
@@ -935,6 +1139,63 @@ List<Widget> _buildSetupPieces(
   }
 
   return pieces;
+}
+
+Widget _buildDropIndicators(Size boardSize, BoardState state) {
+  final cellWidth = boardSize.width / 9;
+  final cellHeight = boardSize.height / 10;
+
+  return CustomPaint(
+    size: boardSize,
+    painter: _DropIndicatorsPainter(
+      cellWidth: cellWidth,
+      cellHeight: cellHeight,
+      isDragging: state.selectedSetupPiece != null,
+    ),
+  );
+}
+
+class _DropIndicatorsPainter extends CustomPainter {
+  final double cellWidth;
+  final double cellHeight;
+  final bool isDragging;
+
+  _DropIndicatorsPainter({
+    required this.cellWidth,
+    required this.cellHeight,
+    required this.isDragging,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!isDragging) return;
+
+    final paint = Paint()
+      ..color = Colors.blue.withValues(alpha: 0.6)
+      ..style = PaintingStyle.fill;
+
+    // Draw small dots at each cell center
+    for (int rank = 0; rank < 10; rank++) {
+      for (int file = 0; file < 9; file++) {
+        final centerX = file * cellWidth + cellWidth / 2;
+        final centerY = rank * cellHeight + cellHeight / 2;
+
+        canvas.drawCircle(
+          Offset(centerX, centerY),
+          3.0, // Small dot radius
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    return oldDelegate is _DropIndicatorsPainter &&
+        (oldDelegate.cellWidth != cellWidth ||
+            oldDelegate.cellHeight != cellHeight ||
+            oldDelegate.isDragging != isDragging);
+  }
 }
 
 void _onSetupBoardTap(

@@ -44,11 +44,111 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
   int _engineDepth = 16;
   bool _showBestMoves = true; // Show/hide best moves panel
 
+  // Reset all settings to initial values
+  void _resetSettings() {
+    setState(() {
+      _selectedEngine = 'EleEye';
+      _bestMovesCount = 1;
+      _engineThinkingTime = 10;
+      _engineDepth = 16;
+      _showBestMoves = true;
+    });
+  }
+
+  // Show difficulty selection dialog
+  void _showDifficultySelection() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Chọn cấp độ khó'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Chọn cấp độ khó cho máy:'),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.star_border, color: Colors.green),
+              title: const Text('Dễ'),
+              subtitle: const Text(
+                'Máy đi ngẫu nhiên, thỉnh thoảng theo bestmove thấp',
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _startVsEngineMode('easy');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.star_half, color: Colors.orange),
+              title: const Text('Trung bình'),
+              subtitle: const Text('Máy đi theo bestmove có điểm thấp hơn'),
+              onTap: () {
+                Navigator.pop(context);
+                _startVsEngineMode('medium');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.star, color: Colors.red),
+              title: const Text('Khó'),
+              subtitle: const Text('Máy đi theo bestmove tốt nhất'),
+              onTap: () {
+                Navigator.pop(context);
+                _startVsEngineMode('hard');
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Hủy'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Start vs engine mode with selected difficulty
+  Future<void> _startVsEngineMode(String difficulty) async {
+    setState(() {
+      _gameMode = 'vs_engine';
+      // Always show best moves for all difficulty modes
+      _showBestMoves = true;
+    });
+
+    final controller = ref.read(boardControllerProvider.notifier);
+    await controller.startVsEngineMode(difficulty);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Bắt đầu chế độ đánh với máy - Cấp độ: ${_getDifficultyName(difficulty)}',
+        ),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  // Get difficulty display name
+  String _getDifficultyName(String difficulty) {
+    switch (difficulty) {
+      case 'easy':
+        return 'Dễ';
+      case 'medium':
+        return 'Trung bình';
+      case 'hard':
+        return 'Khó';
+      default:
+        return 'Không xác định';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    // Show side selection dialog first
+    // Set callback for resetting settings
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final controller = ref.read(boardControllerProvider.notifier);
+      controller.setResetSettingsCallback(_resetSettings);
       _showSideSelection();
     });
   }
@@ -89,6 +189,26 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
           ),
         ),
         actions: [
+          // Exit vs engine mode button
+          if (_gameMode == 'vs_engine')
+            IconButton(
+              icon: const Icon(Icons.stop),
+              onPressed: () {
+                setState(() {
+                  _gameMode = 'normal';
+                  _showBestMoves = true;
+                });
+                final controller = ref.read(boardControllerProvider.notifier);
+                controller.stopVsEngineMode();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Đã thoát chế độ đánh với máy'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+              },
+              tooltip: 'Thoát chế độ đánh với máy',
+            ),
           IconButton(
             icon: Icon(
               _showBestMoves ? Icons.visibility : Icons.visibility_off,
@@ -176,16 +296,11 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
           ListTile(
             leading: const Icon(Icons.smart_toy),
             title: const Text('Đánh với máy'),
-            subtitle: const Text('Sử dụng engine EleEye'),
+            subtitle: const Text('Chọn cấp độ khó'),
             selected: _gameMode == 'vs_engine',
             onTap: () {
-              setState(() {
-                _gameMode = 'vs_engine';
-              });
-              // Enable vs engine mode
-              final controller = ref.read(boardControllerProvider.notifier);
-              controller.setVsEngineMode(true);
               Navigator.pop(context);
+              _showDifficultySelection();
             },
           ),
           const Divider(),
@@ -384,8 +499,8 @@ class _XiangqiHomePageState extends ConsumerState<XiangqiHomePage> {
                   // Step 2: Set MultiPV after engine is ready
                   await controller.setMultiPv(_bestMovesCount);
 
-                  // Step 3: Store depth for later use
-                  _engineDepth = _engineDepth;
+                  // Step 3: Set analysis depth
+                  await controller.setAnalysisDepth(_engineDepth);
 
                   // Close loading dialog
                   Navigator.of(context).pop();

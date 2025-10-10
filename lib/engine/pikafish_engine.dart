@@ -203,37 +203,9 @@ class PikafishEngine implements IEngine {
   /// Check for game over conditions from info output
   void _checkGameOverFromInfo(String line) {
     try {
-      // Look for mate scores in info output
-      // Example: "info depth 10 score mate 0 pv ..." (checkmate)
-      // Example: "info depth 10 score mate -3 pv ..." (mate in 3 for opponent)
-      if (line.contains('score mate')) {
-        final parts = line.split(' ');
-        final scoreIndex = parts.indexOf('score');
-        if (scoreIndex >= 0 && scoreIndex + 2 < parts.length) {
-          final mateValue = int.tryParse(parts[scoreIndex + 2]);
-          if (mateValue != null) {
-            if (mateValue == 0) {
-              // Checkmate detected
-              AppLogger().log('Pikafish detected checkmate from info: $line');
-              _ctrl.add(GameOverMessage('Checkmate detected by Pikafish'));
-            } else if (mateValue > 0) {
-              // Mate in N moves for current player
-              AppLogger().log(
-                'Pikafish detected mate in $mateValue from info: $line',
-              );
-              _ctrl.add(GameOverMessage('Mate in $mateValue moves'));
-            } else {
-              // Mate in N moves for opponent
-              AppLogger().log(
-                'Pikafish detected mate in ${-mateValue} for opponent from info: $line',
-              );
-              _ctrl.add(
-                GameOverMessage('Opponent has mate in ${-mateValue} moves'),
-              );
-            }
-          }
-        }
-      }
+      // Mate notifications are now handled in BoardController to avoid duplicates
+      // This function is kept for potential future use but currently disabled
+      // to prevent duplicate mate notifications
     } catch (e) {
       AppLogger().error('Error checking game over from info', e);
     }

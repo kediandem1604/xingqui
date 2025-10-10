@@ -188,13 +188,87 @@ class XiangqiRules {
       // Check if stays in palace
       final isRedKing = move.fromRank < 3;
       if (isRedKing) {
-        return move.toRank < 3 && move.toFile >= 3 && move.toFile <= 5;
+        if (move.toRank >= 3 || move.toFile < 3 || move.toFile > 5) {
+          return false;
+        }
       } else {
-        return move.toRank >= 7 && move.toFile >= 3 && move.toFile <= 5;
+        if (move.toRank < 7 || move.toFile < 3 || move.toFile > 5) {
+          return false;
+        }
       }
+
+      // Check king face-to-face rule: two kings cannot face each other directly
+      if (_wouldKingsFaceEachOther(board, move)) {
+        return false;
+      }
+
+      return true;
     }
 
     return false;
+  }
+
+  // Check if the move would result in kings facing each other directly
+  static bool _wouldKingsFaceEachOther(List<List<String>> board, Move move) {
+    // Find both kings
+    int redKingFile = -1, redKingRank = -1;
+    int blackKingFile = -1, blackKingRank = -1;
+
+    for (int rank = 0; rank < 10; rank++) {
+      for (int file = 0; file < 9; file++) {
+        final piece = board[rank][file];
+        if (piece == 'K') {
+          redKingFile = file;
+          redKingRank = rank;
+        } else if (piece == 'k') {
+          blackKingFile = file;
+          blackKingRank = rank;
+        }
+      }
+    }
+
+    // If we can't find both kings, no face-to-face issue
+    if (redKingFile == -1 || blackKingFile == -1) return false;
+
+    // Check if the move involves a king
+    final fromPiece = board[move.fromRank][move.fromFile];
+    if (fromPiece.toLowerCase() != 'k') return false;
+
+    // Determine which king is moving
+    final isRedKingMoving = fromPiece == 'K';
+    int movingKingFile, movingKingRank;
+    int otherKingFile, otherKingRank;
+
+    if (isRedKingMoving) {
+      movingKingFile = move.toFile;
+      movingKingRank = move.toRank;
+      otherKingFile = blackKingFile;
+      otherKingRank = blackKingRank;
+    } else {
+      movingKingFile = move.toFile;
+      movingKingRank = move.toRank;
+      otherKingFile = redKingFile;
+      otherKingRank = redKingRank;
+    }
+
+    // Check if kings are in the same file (column)
+    if (movingKingFile != otherKingFile) return false;
+
+    // Check if there are any pieces between the kings
+    final startRank = movingKingRank < otherKingRank
+        ? movingKingRank
+        : otherKingRank;
+    final endRank = movingKingRank < otherKingRank
+        ? otherKingRank
+        : movingKingRank;
+
+    for (int rank = startRank + 1; rank < endRank; rank++) {
+      if (board[rank][movingKingFile].isNotEmpty) {
+        return false; // There's a piece between the kings
+      }
+    }
+
+    return true; // Kings would face each other directly
   }
 
   static bool _isValidCannonMove(List<List<String>> board, Move move) {
@@ -309,5 +383,453 @@ class XiangqiRules {
         return false;
       }
     }
+  }
+
+  // Get all legal moves from a FEN position
+  static List<String> getAllLegalMoves(String fen) {
+    final legalMoves = <String>[];
+    final board = FenParser.parseBoard(fen);
+    final sideToMove = FenParser.getSideToMove(fen);
+
+    // Iterate through all squares to find pieces of the side to move
+    for (int rank = 0; rank < 10; rank++) {
+      for (int file = 0; file < 9; file++) {
+        final piece = board[rank][file];
+        if (piece.isEmpty) continue;
+
+        // Check if this piece belongs to the side to move
+        final isRedPiece = piece == piece.toUpperCase();
+        final isRedToMove = sideToMove == 'w';
+        if (isRedPiece != isRedToMove) continue;
+
+        // Generate all possible moves for this piece
+        final moves = _generateMovesForPiece(board, rank, file, piece);
+        legalMoves.addAll(moves);
+      }
+    }
+
+    return legalMoves;
+  }
+
+  // Generate all possible moves for a specific piece
+  static List<String> _generateMovesForPiece(
+    List<List<String>> board,
+    int fromRank,
+    int fromFile,
+    String piece,
+  ) {
+    final pieceType = piece.toLowerCase();
+
+    // Convert board coordinates to UCI notation
+    final fromFileUci = String.fromCharCode(97 + fromFile); // a=0, b=1, etc.
+    final fromRankUci = 9 - fromRank; // Convert to UCI rank (0=bottom, 9=top)
+
+    List<List<int>> boardMoves = [];
+    switch (pieceType) {
+      case 'k': // King
+        boardMoves = _generateKingMoves(board, fromRank, fromFile, piece);
+        break;
+      case 'a': // Advisor
+        boardMoves = _generateAdvisorMoves(board, fromRank, fromFile, piece);
+        break;
+      case 'e': // Elephant
+        boardMoves = _generateElephantMoves(board, fromRank, fromFile, piece);
+        break;
+      case 'h': // Horse
+        boardMoves = _generateHorseMoves(board, fromRank, fromFile, piece);
+        break;
+      case 'r': // Rook/Chariot
+        boardMoves = _generateRookMoves(board, fromRank, fromFile, piece);
+        break;
+      case 'c': // Cannon
+        boardMoves = _generateCannonMoves(board, fromRank, fromFile, piece);
+        break;
+      case 'p': // Pawn
+        boardMoves = _generatePawnMoves(board, fromRank, fromFile, piece);
+        break;
+    }
+
+    // Convert to UCI notation
+    return boardMoves.map((move) {
+      final toFileUci = String.fromCharCode(97 + move[0]);
+      final toRankUci = 9 - move[1];
+      return '$fromFileUci$fromRankUci$toFileUci$toRankUci';
+    }).toList();
+  }
+
+  // Generate king moves (simplified - only within palace)
+  static List<List<int>> _generateKingMoves(
+    List<List<String>> board,
+    int fromRank,
+    int fromFile,
+    String piece,
+  ) {
+    final moves = <List<int>>[];
+    final isRedKing = piece == piece.toUpperCase();
+
+    // King can only move within palace (3x3 area)
+    final palaceRanks = isRedKing ? [7, 8, 9] : [0, 1, 2];
+    final palaceFiles = [3, 4, 5];
+
+    // Check all adjacent squares
+    for (int dr = -1; dr <= 1; dr++) {
+      for (int df = -1; df <= 1; df++) {
+        if (dr == 0 && df == 0) continue; // Skip current position
+
+        final toRank = fromRank + dr;
+        final toFile = fromFile + df;
+
+        // Check if within palace
+        if (!palaceRanks.contains(toRank) || !palaceFiles.contains(toFile)) {
+          continue;
+        }
+
+        // Check if destination is empty or has opponent piece
+        final toPiece = board[toRank][toFile];
+        if (toPiece.isNotEmpty) {
+          final isToRedPiece = toPiece == toPiece.toUpperCase();
+          final isFromRedPiece = piece == piece.toUpperCase();
+          if (isToRedPiece == isFromRedPiece) {
+            continue; // Can't capture own piece
+          }
+        }
+
+        moves.add([toFile, toRank]);
+      }
+    }
+
+    return moves;
+  }
+
+  // Generate advisor moves (simplified - only within palace, diagonal only)
+  static List<List<int>> _generateAdvisorMoves(
+    List<List<String>> board,
+    int fromRank,
+    int fromFile,
+    String piece,
+  ) {
+    final moves = <List<int>>[];
+    final isRedAdvisor = piece == piece.toUpperCase();
+
+    // Advisor can only move within palace (3x3 area), diagonal only
+    final palaceRanks = isRedAdvisor ? [7, 8, 9] : [0, 1, 2];
+    final palaceFiles = [3, 4, 5];
+
+    // Check diagonal moves only
+    final diagonalMoves = [
+      [-1, -1],
+      [-1, 1],
+      [1, -1],
+      [1, 1],
+    ];
+
+    for (final move in diagonalMoves) {
+      final toRank = fromRank + move[0];
+      final toFile = fromFile + move[1];
+
+      // Check if within palace
+      if (!palaceRanks.contains(toRank) || !palaceFiles.contains(toFile)) {
+        continue;
+      }
+
+      // Check if destination is empty or has opponent piece
+      final toPiece = board[toRank][toFile];
+      if (toPiece.isNotEmpty) {
+        final isToRedPiece = toPiece == toPiece.toUpperCase();
+        final isFromRedPiece = piece == piece.toUpperCase();
+        if (isToRedPiece == isFromRedPiece) continue; // Can't capture own piece
+      }
+
+      moves.add([toFile, toRank]);
+    }
+
+    return moves;
+  }
+
+  // Generate elephant moves (simplified - 2 squares diagonally, can't cross river)
+  static List<List<int>> _generateElephantMoves(
+    List<List<String>> board,
+    int fromRank,
+    int fromFile,
+    String piece,
+  ) {
+    final moves = <List<int>>[];
+    final isRedElephant = piece == piece.toUpperCase();
+
+    // Elephant can't cross river
+    final maxRank = isRedElephant
+        ? 9
+        : 4; // Red can't go below rank 4, Black can't go above rank 4
+
+    // Check 2-square diagonal moves
+    final diagonalMoves = [
+      [-2, -2],
+      [-2, 2],
+      [2, -2],
+      [2, 2],
+    ];
+
+    for (final move in diagonalMoves) {
+      final toRank = fromRank + move[0];
+      final toFile = fromFile + move[1];
+
+      // Check bounds
+      if (toRank < 0 || toRank > 9 || toFile < 0 || toFile > 8) continue;
+
+      // Check river crossing
+      if (isRedElephant && toRank > maxRank) continue;
+      if (!isRedElephant && toRank < maxRank) continue;
+
+      // Check if blocking piece exists (elephant can't jump)
+      final blockRank = fromRank + move[0] ~/ 2;
+      final blockFile = fromFile + move[1] ~/ 2;
+      if (board[blockRank][blockFile].isNotEmpty) continue;
+
+      // Check if destination is empty or has opponent piece
+      final toPiece = board[toRank][toFile];
+      if (toPiece.isNotEmpty) {
+        final isToRedPiece = toPiece == toPiece.toUpperCase();
+        final isFromRedPiece = piece == piece.toUpperCase();
+        if (isToRedPiece == isFromRedPiece) continue; // Can't capture own piece
+      }
+
+      moves.add([toFile, toRank]);
+    }
+
+    return moves;
+  }
+
+  // Generate horse moves (simplified - L-shaped moves)
+  static List<List<int>> _generateHorseMoves(
+    List<List<String>> board,
+    int fromRank,
+    int fromFile,
+    String piece,
+  ) {
+    final moves = <List<int>>[];
+
+    // Horse moves in L-shape: 2 squares in one direction, then 1 square perpendicular
+    final horseMoves = [
+      [-2, -1],
+      [-2, 1],
+      [-1, -2],
+      [-1, 2],
+      [1, -2],
+      [1, 2],
+      [2, -1],
+      [2, 1],
+    ];
+
+    for (final move in horseMoves) {
+      final toRank = fromRank + move[0];
+      final toFile = fromFile + move[1];
+
+      // Check bounds
+      if (toRank < 0 || toRank > 9 || toFile < 0 || toFile > 8) continue;
+
+      // Check if horse leg is blocked
+      int legRank, legFile;
+      if (move[0].abs() == 2) {
+        // Moving 2 ranks, check leg at 1 rank
+        legRank = fromRank + (move[0] > 0 ? 1 : -1);
+        legFile = fromFile;
+      } else {
+        // Moving 2 files, check leg at 1 file
+        legRank = fromRank;
+        legFile = fromFile + (move[1] > 0 ? 1 : -1);
+      }
+
+      if (board[legRank][legFile].isNotEmpty) continue; // Leg is blocked
+
+      // Check if destination is empty or has opponent piece
+      final toPiece = board[toRank][toFile];
+      if (toPiece.isNotEmpty) {
+        final isToRedPiece = toPiece == toPiece.toUpperCase();
+        final isFromRedPiece = piece == piece.toUpperCase();
+        if (isToRedPiece == isFromRedPiece) continue; // Can't capture own piece
+      }
+
+      moves.add([toFile, toRank]);
+    }
+
+    return moves;
+  }
+
+  // Generate rook moves (horizontal and vertical)
+  static List<List<int>> _generateRookMoves(
+    List<List<String>> board,
+    int fromRank,
+    int fromFile,
+    String piece,
+  ) {
+    final moves = <List<int>>[];
+
+    // Check all 4 directions
+    final directions = [
+      [-1, 0], [1, 0], [0, -1], [0, 1], // up, down, left, right
+    ];
+
+    for (final dir in directions) {
+      for (int i = 1; i < 10; i++) {
+        final toRank = fromRank + dir[0] * i;
+        final toFile = fromFile + dir[1] * i;
+
+        // Check bounds
+        if (toRank < 0 || toRank > 9 || toFile < 0 || toFile > 8) break;
+
+        final toPiece = board[toRank][toFile];
+
+        if (toPiece.isNotEmpty) {
+          // Check if it's opponent piece
+          final isToRedPiece = toPiece == toPiece.toUpperCase();
+          final isFromRedPiece = piece == piece.toUpperCase();
+          if (isToRedPiece != isFromRedPiece) {
+            moves.add([toFile, toRank]); // Can capture opponent piece
+          }
+          break; // Stop at first piece
+        } else {
+          moves.add([toFile, toRank]); // Empty square, can move
+        }
+      }
+    }
+
+    return moves;
+  }
+
+  // Generate cannon moves (horizontal and vertical, must jump over one piece to capture)
+  static List<List<int>> _generateCannonMoves(
+    List<List<String>> board,
+    int fromRank,
+    int fromFile,
+    String piece,
+  ) {
+    final moves = <List<int>>[];
+
+    // Check all 4 directions
+    final directions = [
+      [-1, 0], [1, 0], [0, -1], [0, 1], // up, down, left, right
+    ];
+
+    for (final dir in directions) {
+      bool hasJumped = false;
+
+      for (int i = 1; i < 10; i++) {
+        final toRank = fromRank + dir[0] * i;
+        final toFile = fromFile + dir[1] * i;
+
+        // Check bounds
+        if (toRank < 0 || toRank > 9 || toFile < 0 || toFile > 8) break;
+
+        final toPiece = board[toRank][toFile];
+
+        if (toPiece.isNotEmpty) {
+          if (!hasJumped) {
+            // First piece encountered, can jump over it
+            hasJumped = true;
+          } else {
+            // Second piece encountered, can capture if it's opponent
+            final isToRedPiece = toPiece == toPiece.toUpperCase();
+            final isFromRedPiece = piece == piece.toUpperCase();
+            if (isToRedPiece != isFromRedPiece) {
+              moves.add([toFile, toRank]); // Can capture opponent piece
+            }
+            break; // Stop after second piece
+          }
+        } else {
+          if (!hasJumped) {
+            // No piece jumped yet, can move to empty square
+            moves.add([toFile, toRank]);
+          }
+          // If hasJumped, can't move to empty square
+        }
+      }
+    }
+
+    return moves;
+  }
+
+  // Generate pawn moves
+  static List<List<int>> _generatePawnMoves(
+    List<List<String>> board,
+    int fromRank,
+    int fromFile,
+    String piece,
+  ) {
+    final moves = <List<int>>[];
+    final isRedPawn = piece == piece.toUpperCase();
+
+    if (isRedPawn) {
+      // Red pawn moves UP (decreasing rank numbers)
+      final hasCrossedRiver = fromRank <= 4; // Red pawn crossed river
+
+      if (hasCrossedRiver) {
+        // After crossing river: can move forward (UP) OR sideways
+        // Forward (UP)
+        if (fromRank > 0) {
+          final toPiece = board[fromRank - 1][fromFile];
+          if (toPiece.isEmpty || toPiece != toPiece.toUpperCase()) {
+            moves.add([fromFile, fromRank - 1]);
+          }
+        }
+        // Sideways
+        if (fromFile > 0) {
+          final toPiece = board[fromRank][fromFile - 1];
+          if (toPiece.isEmpty || toPiece != toPiece.toUpperCase()) {
+            moves.add([fromFile - 1, fromRank]);
+          }
+        }
+        if (fromFile < 8) {
+          final toPiece = board[fromRank][fromFile + 1];
+          if (toPiece.isEmpty || toPiece != toPiece.toUpperCase()) {
+            moves.add([fromFile + 1, fromRank]);
+          }
+        }
+      } else {
+        // Before crossing river: can ONLY move forward (UP)
+        if (fromRank > 0) {
+          final toPiece = board[fromRank - 1][fromFile];
+          if (toPiece.isEmpty || toPiece != toPiece.toUpperCase()) {
+            moves.add([fromFile, fromRank - 1]);
+          }
+        }
+      }
+    } else {
+      // Black pawn moves DOWN (increasing rank numbers)
+      final hasCrossedRiver = fromRank >= 5; // Black pawn crossed river
+
+      if (hasCrossedRiver) {
+        // After crossing river: can move forward (DOWN) OR sideways
+        // Forward (DOWN)
+        if (fromRank < 9) {
+          final toPiece = board[fromRank + 1][fromFile];
+          if (toPiece.isEmpty || toPiece == toPiece.toUpperCase()) {
+            moves.add([fromFile, fromRank + 1]);
+          }
+        }
+        // Sideways
+        if (fromFile > 0) {
+          final toPiece = board[fromRank][fromFile - 1];
+          if (toPiece.isEmpty || toPiece == toPiece.toUpperCase()) {
+            moves.add([fromFile - 1, fromRank]);
+          }
+        }
+        if (fromFile < 8) {
+          final toPiece = board[fromRank][fromFile + 1];
+          if (toPiece.isEmpty || toPiece == toPiece.toUpperCase()) {
+            moves.add([fromFile + 1, fromRank]);
+          }
+        }
+      } else {
+        // Before crossing river: can ONLY move forward (DOWN)
+        if (fromRank < 9) {
+          final toPiece = board[fromRank + 1][fromFile];
+          if (toPiece.isEmpty || toPiece == toPiece.toUpperCase()) {
+            moves.add([fromFile, fromRank + 1]);
+          }
+        }
+      }
+    }
+
+    return moves;
   }
 }

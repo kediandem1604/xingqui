@@ -45,6 +45,7 @@ class BoardState {
   final bool redToMove;
   final List<BestLine> bestLines;
   final int multiPv; // 1..3
+  final int analysisDepth; // 1..20 for engine analysis depth
   final bool canBack;
   final bool canNext;
   final String? selectedEngine;
@@ -70,6 +71,7 @@ class BoardState {
   // AI vs Human mode
   final bool isVsEngineMode; // true if playing against engine
   final bool isEngineTurn; // true if it's engine's turn to move
+  final String? engineDifficulty; // 'easy', 'medium', 'hard' for vs engine mode
 
   // Setup mode navigation
   final List<String> setupMoveHistory; // FEN history for setup mode
@@ -82,6 +84,7 @@ class BoardState {
     required this.redToMove,
     required this.bestLines,
     required this.multiPv,
+    required this.analysisDepth,
     required this.canBack,
     required this.canNext,
     this.selectedEngine,
@@ -100,6 +103,7 @@ class BoardState {
     this.isRedAtBottom = true, // default: red at bottom
     this.isVsEngineMode = false,
     this.isEngineTurn = false,
+    this.engineDifficulty,
     this.setupMoveHistory = const [],
     this.setupMoveHistoryPointer = 0,
   });
@@ -111,6 +115,7 @@ class BoardState {
     bool? redToMove,
     List<BestLine>? bestLines,
     int? multiPv,
+    int? analysisDepth,
     bool? canBack,
     bool? canNext,
     String? selectedEngine,
@@ -129,6 +134,7 @@ class BoardState {
     bool? isRedAtBottom,
     bool? isVsEngineMode,
     bool? isEngineTurn,
+    String? engineDifficulty,
     List<String>? setupMoveHistory,
     int? setupMoveHistoryPointer,
     // explicit clear flags
@@ -141,6 +147,7 @@ class BoardState {
     redToMove: redToMove ?? this.redToMove,
     bestLines: bestLines ?? this.bestLines,
     multiPv: multiPv ?? this.multiPv,
+    analysisDepth: analysisDepth ?? this.analysisDepth,
     canBack: canBack ?? this.canBack,
     canNext: canNext ?? this.canNext,
     selectedEngine: selectedEngine ?? this.selectedEngine,
@@ -161,6 +168,7 @@ class BoardState {
     isRedAtBottom: isRedAtBottom ?? this.isRedAtBottom,
     isVsEngineMode: isVsEngineMode ?? this.isVsEngineMode,
     isEngineTurn: isEngineTurn ?? this.isEngineTurn,
+    engineDifficulty: engineDifficulty ?? this.engineDifficulty,
     setupMoveHistory: setupMoveHistory ?? this.setupMoveHistory,
     setupMoveHistoryPointer:
         setupMoveHistoryPointer ?? this.setupMoveHistoryPointer,
@@ -173,6 +181,7 @@ class BoardState {
     redToMove: true,
     bestLines: const [],
     multiPv: 1,
+    analysisDepth: 16, // Default depth
     canBack: false,
     canNext: false,
     selectedEngine: 'EleEye',
@@ -196,9 +205,45 @@ class BoardController extends StateNotifier<BoardState> {
   bool _isCommittingAnim = false;
   String? _recentAppliedMove;
   DateTime? _recentAppliedAt;
+  VoidCallback? _onResetSettings; // Callback to reset UI settings
   DateTime? _pendingSince;
 
   BoardController() : super(BoardState.initial());
+
+  // Set callback for resetting UI settings
+  void setResetSettingsCallback(VoidCallback callback) {
+    _onResetSettings = callback;
+  }
+
+  // Start vs engine mode with difficulty
+  Future<void> startVsEngineMode(String difficulty) async {
+    AppLogger().log('Starting vs engine mode with difficulty: $difficulty');
+
+    // Switch to Pikafish engine for vs engine mode
+    await switchEngine('Pikafish');
+
+    // Set MultiPV to 2 to get 2 best moves for difficulty selection
+    await setMultiPv(2);
+
+    state = state.copyWith(
+      isVsEngineMode: true,
+      isEngineTurn: false, // Human starts first
+      engineDifficulty: difficulty,
+    );
+
+    // Start analysis for the current position
+    await _analyzePosition();
+  }
+
+  // Stop vs engine mode
+  void stopVsEngineMode() {
+    AppLogger().log('Stopping vs engine mode');
+    state = state.copyWith(
+      isVsEngineMode: false,
+      isEngineTurn: false,
+      engineDifficulty: null,
+    );
+  }
 
   Future<void> init() async {
     try {
@@ -511,6 +556,9 @@ class BoardController extends StateNotifier<BoardState> {
         }
 
         state = state.copyWith(bestLines: list);
+
+        // Check for mate notifications only at maximum depth to avoid duplicates
+        _checkMateNotifications(pv, message.raw);
       }
     } else if (message is BestMoveMessage) {
       AppLogger().log('*** RECEIVED BESTMOVE: ${message.bestMove} ***');
@@ -582,7 +630,7 @@ class BoardController extends StateNotifier<BoardState> {
     await AppLogger().log('Initialize game');
     await _engine!.setMultiPV(state.multiPv);
     await _engine!.newGame();
-    await _analyzePosition(movetimeMs: 1000);
+    await _analyzePosition();
   }
 
   List<String> currentMoves() => state.moves.take(state.pointer).toList();
@@ -615,7 +663,7 @@ class BoardController extends StateNotifier<BoardState> {
           await AppLogger().error('Pikafish side switch error', e);
         }
       }
-      await _analyzePosition(movetimeMs: 1000);
+      await _analyzePosition();
     }
   }
 
@@ -636,7 +684,25 @@ class BoardController extends StateNotifier<BoardState> {
 
     state = state.copyWith(multiPv: n, bestLines: []);
     await _engine!.setMultiPV(n);
-    await _analyzePosition(movetimeMs: 1000);
+    await _analyzePosition();
+  }
+
+  Future<void> setAnalysisDepth(int depth) async {
+    AppLogger().log('Setting analysis depth to: $depth');
+    state = state.copyWith(analysisDepth: depth, bestLines: []);
+
+    // If engine is currently thinking, stop it and restart with new depth
+    if (state.isEngineThinking) {
+      AppLogger().log('Stopping current analysis to restart with new depth');
+      try {
+        _engine?.send('stop');
+      } catch (e) {
+        AppLogger().log('Failed to stop engine: $e');
+      }
+    }
+
+    // Always restart analysis with new depth
+    await _analyzePosition();
   }
 
   Future<void> applyMove(String moveUci) async {
@@ -736,20 +802,25 @@ class BoardController extends StateNotifier<BoardState> {
 
     if (!isCheckmate && (winner == null || winner == 'Draw')) {
       // Game is still ongoing, start analysis
-      await _analyzePosition(movetimeMs: 1000);
+      await _analyzePosition();
 
       // Check if it's engine's turn in vs engine mode
       if (state.isVsEngineMode) {
         final isRedToMove = FenParser.getSideToMove(state.fen) == 'w';
-        final shouldBeEngineTurn = !isRedToMove; // Engine plays as Black
+        // Engine plays as Black (red pieces at top, black pieces at bottom)
+        final shouldBeEngineTurn = !isRedToMove;
 
         if (shouldBeEngineTurn && !state.isEngineTurn) {
           // Switch to engine's turn
           state = state.copyWith(isEngineTurn: true);
+          AppLogger().log(
+            'Switching to engine turn - difficulty: ${state.engineDifficulty}',
+          );
           _makeEngineMove();
         } else if (!shouldBeEngineTurn && state.isEngineTurn) {
           // Switch to human's turn
           state = state.copyWith(isEngineTurn: false);
+          AppLogger().log('Switching to human turn');
         }
       }
     } else {
@@ -805,7 +876,7 @@ class BoardController extends StateNotifier<BoardState> {
     } else {
       await _engine!.setPosition(newFen, state.moves.take(newPointer).toList());
     }
-    await _analyzePosition(movetimeMs: 1000);
+    await _analyzePosition();
   }
 
   Future<void> next() async {
@@ -856,16 +927,25 @@ class BoardController extends StateNotifier<BoardState> {
     } else {
       await _engine!.setPosition(newFen, state.moves.take(newPointer).toList());
     }
-    await _analyzePosition(movetimeMs: 1000);
+    await _analyzePosition();
   }
 
   Future<void> reset() async {
-    if (_engine == null) return;
-
+    // Reset to initial state
     state = BoardState.initial();
-    await _engine!.newGame();
-    await _engine!.setMultiPV(state.multiPv);
-    await _analyzePosition(movetimeMs: 1000);
+
+    // Reset UI settings if callback is set
+    _onResetSettings?.call();
+
+    // Switch back to the initial engine (EleEye)
+    await switchEngine('EleEye');
+
+    // Initialize the engine with default settings
+    if (_engine != null) {
+      await _engine!.newGame();
+      await _engine!.setMultiPV(state.multiPv);
+      await _analyzePosition();
+    }
   }
 
   /// Updates board position from recognized FEN
@@ -903,7 +983,7 @@ class BoardController extends StateNotifier<BoardState> {
 
     // Set engine position
     await _engine!.setPosition(fen, []);
-    await _analyzePosition(movetimeMs: 1000);
+    await _analyzePosition();
 
     // Check game status
     await _checkGameStatus();
@@ -999,6 +1079,19 @@ class BoardController extends StateNotifier<BoardState> {
     Duration duration = const Duration(seconds: 3),
   }) {
     try {
+      // Check if a similar notification already exists to prevent duplicates
+      final existingNotification = state.notifications.any(
+        (n) =>
+            n.message == message ||
+            (message.contains('mate in') && n.message.contains('mate in')) ||
+            (message.contains('Checkmate') && n.message.contains('Checkmate')),
+      );
+
+      if (existingNotification) {
+        AppLogger().log('Notification already exists, skipping: $message');
+        return;
+      }
+
       AppLogger().log('=== SHOWING NOTIFICATION ===');
       AppLogger().log('Message: $message');
       AppLogger().log('Background color: $backgroundColor');
@@ -1037,6 +1130,61 @@ class BoardController extends StateNotifier<BoardState> {
       AppLogger().log('=== NOTIFICATION SETUP COMPLETE ===');
     } catch (e, stackTrace) {
       AppLogger().error('Error showing notification', e, stackTrace);
+    }
+  }
+
+  /// Check for mate notifications only at maximum depth to avoid duplicates
+  void _checkMateNotifications(PvInfo pv, String rawLine) {
+    try {
+      // Only check for mate notifications at maximum depth to avoid spam
+      final maxDepth = 16; // Use default depth to avoid spam
+      if (pv.depth < maxDepth) {
+        return; // Skip mate notifications until we reach max depth
+      }
+
+      // Look for mate scores in the raw line
+      if (rawLine.contains('score mate')) {
+        final parts = rawLine.split(' ');
+        final scoreIndex = parts.indexOf('score');
+        if (scoreIndex >= 0 && scoreIndex + 2 < parts.length) {
+          final mateValue = int.tryParse(parts[scoreIndex + 2]);
+          if (mateValue != null) {
+            if (mateValue == 0) {
+              // Checkmate detected
+              AppLogger().log(
+                'Engine detected checkmate at depth ${pv.depth}: $rawLine',
+              );
+              _showNotification(
+                'Checkmate detected!',
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 5),
+              );
+            } else if (mateValue > 0) {
+              // Mate in N moves for current player
+              AppLogger().log(
+                'Engine detected mate in $mateValue at depth ${pv.depth}: $rawLine',
+              );
+              _showNotification(
+                'Mate in $mateValue moves',
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 4),
+              );
+            } else {
+              // Mate in N moves for opponent
+              AppLogger().log(
+                'Engine detected mate in ${-mateValue} for opponent at depth ${pv.depth}: $rawLine',
+              );
+              _showNotification(
+                'Opponent has mate in ${-mateValue} moves',
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 4),
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      AppLogger().error('Error checking mate notifications', e);
     }
   }
 
@@ -1135,28 +1283,52 @@ class BoardController extends StateNotifier<BoardState> {
     if (!state.isVsEngineMode || !state.isEngineTurn || _engine == null) return;
 
     try {
-      // Get the best move from engine
-      await _engine!.setPosition(state.fen, currentMoves());
-      await _engine!.go(depth: 16); // TODO: Use depth from settings
+      AppLogger().log(
+        'Engine making move with difficulty: ${state.engineDifficulty}',
+      );
 
-      // Wait for best move
+      // Check if we already have best lines from previous analysis
+      if (state.bestLines.isNotEmpty) {
+        AppLogger().log('Using existing best lines for engine move');
+        String selectedMove = _selectEngineMove(state.bestLines);
+        if (selectedMove.isNotEmpty && selectedMove != 'null') {
+          AppLogger().log('Engine selected move: $selectedMove');
+          await _applyEngineMove(selectedMove);
+          return;
+        }
+      }
+
+      // If no best lines available, start new analysis
+      AppLogger().log('Starting new engine analysis for move selection');
+      await _engine!.go(depth: state.analysisDepth);
+
+      // Wait for bestmove and apply it immediately
       final completer = Completer<String>();
       late StreamSubscription subscription;
 
       subscription = _engine!.messages.listen((message) {
         if (message is BestMoveMessage) {
-          completer.complete(message.bestMove);
+          // Get the current best lines from state for difficulty selection
+          final bestLines = state.bestLines;
+          if (bestLines.isNotEmpty) {
+            String selectedMove = _selectEngineMove(bestLines);
+            completer.complete(selectedMove);
+          } else {
+            // Fallback to the bestmove from engine
+            completer.complete(message.bestMove);
+          }
           subscription.cancel();
         }
       });
 
-      final bestMove = await completer.future.timeout(
+      final selectedMove = await completer.future.timeout(
         const Duration(seconds: 10),
       );
 
-      if (bestMove.isNotEmpty && bestMove != 'null') {
-        // Apply the engine's move
-        await applyMove(bestMove);
+      if (selectedMove.isNotEmpty && selectedMove != 'null') {
+        AppLogger().log('Engine selected move: $selectedMove');
+        // Apply the engine's move directly without waiting for readyok
+        await _applyEngineMove(selectedMove);
       }
     } catch (e) {
       AppLogger().error('Engine move failed', e);
@@ -1168,7 +1340,183 @@ class BoardController extends StateNotifier<BoardState> {
     }
   }
 
+  // Apply engine move without waiting for readyok
+  Future<void> _applyEngineMove(String moveUci) async {
+    if (moveUci.isEmpty || moveUci == 'null') return;
+
+    // Validate move
+    if (!XiangqiRules.isValidMove(state.fen, moveUci)) {
+      AppLogger().error('Invalid engine move', moveUci);
+      return;
+    }
+
+    final newMoves = [...state.moves];
+    if (state.pointer < newMoves.length) {
+      newMoves.removeRange(state.pointer, newMoves.length);
+    }
+    newMoves.add(moveUci);
+
+    // Update FEN after the move
+    final newFen = FenParser.applyMove(state.fen, moveUci);
+
+    state = state.copyWith(
+      fen: newFen,
+      moves: newMoves,
+      pointer: newMoves.length,
+      redToMove: !state.redToMove, // Switch sides
+      bestLines: [],
+      canBack: newMoves.isNotEmpty,
+      canNext: false,
+      selectedFile: null,
+      selectedRank: null,
+      possibleMoves: [],
+      isEngineThinking: false,
+      isEngineTurn: false, // Switch back to human turn
+    );
+
+    // Update engine position without waiting for readyok
+    try {
+      if (state.selectedEngine == 'Pikafish') {
+        if (_isGameFromInitialPosition()) {
+          await _engine!.setPosition('startpos', currentMoves());
+        } else {
+          await _engine!.setPosition(state.fen, currentMoves());
+        }
+      } else {
+        await _engine!.setPosition(state.fen, currentMoves());
+      }
+    } catch (e) {
+      AppLogger().log('Engine position update failed (non-critical): $e');
+      // Don't show error notification for this as it's not critical
+    }
+
+    // Check game status
+    try {
+      await _checkGameStatus();
+    } catch (e) {
+      AppLogger().error('Game status check failed after engine move', e);
+    }
+
+    // Start analysis for human's turn
+    final winner = GameStatusService.getWinner(state.fen);
+    final isCheckmate = GameStatusService.isCheckmate(state.fen);
+
+    if (!isCheckmate && (winner == null || winner == 'Draw')) {
+      await _analyzePosition();
+    }
+
+    AppLogger().log('Engine move applied successfully: $moveUci');
+  }
+
+  // Select engine move based on difficulty
+  String _selectEngineMove(List<BestLine> bestLines) {
+    if (bestLines.isEmpty) return '';
+
+    final difficulty = state.engineDifficulty ?? 'hard';
+    AppLogger().log('Selecting move for difficulty: $difficulty');
+
+    switch (difficulty) {
+      case 'easy':
+        return _selectEasyMove(bestLines);
+      case 'medium':
+        return _selectMediumMove(bestLines);
+      case 'hard':
+      default:
+        return _selectHardMove(bestLines);
+    }
+  }
+
+  // Easy: Random valid move, but every 2 moves use lower scoring best move
+  String _selectEasyMove(List<BestLine> bestLines) {
+    // Every 2 moves, use the lower scoring best move
+    final moveCount = state.moves.length;
+    if (moveCount % 2 == 0 && bestLines.length >= 2) {
+      // Use the move with lower score (worse move)
+      final move1 = bestLines[0];
+      final move2 = bestLines[1];
+      final selectedMove = move1.scoreCp < move2.scoreCp
+          ? move1.firstMove
+          : move2.firstMove;
+      AppLogger().log(
+        'Easy mode: Using lower scoring move (${move1.scoreCp} vs ${move2.scoreCp})',
+      );
+      return selectedMove;
+    } else {
+      // For random moves, get all legal moves and choose randomly
+      final allLegalMoves = XiangqiRules.getAllLegalMoves(state.fen);
+      if (allLegalMoves.isNotEmpty) {
+        // Remove best moves from legal moves to get truly random moves
+        final bestMoves = bestLines.map((line) => line.firstMove).toSet();
+        final randomMoves = allLegalMoves
+            .where((move) => !bestMoves.contains(move))
+            .toList();
+
+        if (randomMoves.isNotEmpty) {
+          final randomIndex =
+              DateTime.now().millisecondsSinceEpoch % randomMoves.length;
+          final randomMove = randomMoves[randomIndex];
+          AppLogger().log(
+            'Easy mode: Using truly random move (not in best moves)',
+          );
+          return randomMove;
+        } else {
+          // Fallback to any legal move if all moves are best moves
+          final randomIndex =
+              DateTime.now().millisecondsSinceEpoch % allLegalMoves.length;
+          final randomMove = allLegalMoves[randomIndex];
+          AppLogger().log('Easy mode: Using random legal move (fallback)');
+          return randomMove;
+        }
+      } else {
+        // Fallback to best move if no legal moves found
+        AppLogger().log('Easy mode: No legal moves found, using best move');
+        return bestLines.first.firstMove;
+      }
+    }
+  }
+
+  // Medium: Use lower scoring best move
+  String _selectMediumMove(List<BestLine> bestLines) {
+    if (bestLines.length >= 2) {
+      // Use the move with lower score (worse move)
+      final move1 = bestLines[0];
+      final move2 = bestLines[1];
+      final selectedMove = move1.scoreCp < move2.scoreCp
+          ? move1.firstMove
+          : move2.firstMove;
+      AppLogger().log(
+        'Medium mode: Using lower scoring move (${move1.scoreCp} vs ${move2.scoreCp})',
+      );
+      return selectedMove;
+    } else {
+      // Fallback to first move
+      return bestLines.first.firstMove;
+    }
+  }
+
+  // Hard: Use highest scoring best move
+  String _selectHardMove(List<BestLine> bestLines) {
+    // Use the best move (highest score)
+    final selectedMove = bestLines.first.firstMove;
+    AppLogger().log(
+      'Hard mode: Using best move (score: ${bestLines.first.scoreCp})',
+    );
+    return selectedMove;
+  }
+
   void onBoardTap(int file, int rank) {
+    // If engine is thinking, stop it and start new analysis
+    if (state.isEngineThinking) {
+      AppLogger().log('User interaction detected - stopping engine analysis');
+      try {
+        _engine?.send('stop');
+      } catch (e) {
+        AppLogger().log('Failed to stop engine: $e');
+      }
+      // Clear thinking state immediately
+      state = state.copyWith(isEngineThinking: false, bestLines: []);
+    }
+
     // Debug current animation state
     AppLogger().log(
       'TAP DEBUG - Animation: ${state.pendingAnimation != null}, Since: $_pendingSince, Committing: $_isCommittingAnim',
@@ -1463,6 +1811,7 @@ class BoardController extends StateNotifier<BoardState> {
         redToMove: state.redToMove,
         bestLines: state.bestLines,
         multiPv: state.multiPv,
+        analysisDepth: state.analysisDepth,
         canBack: state.canBack,
         canNext: state.canNext,
         selectedEngine: state.selectedEngine,
@@ -1481,7 +1830,7 @@ class BoardController extends StateNotifier<BoardState> {
   }
 
   // Analyze current position with engine-specific MultiPV handling
-  Future<void> _analyzePosition({int? movetimeMs}) async {
+  Future<void> _analyzePosition() async {
     if (_engine == null) return;
 
     // Check game status first - if game is over, don't analyze
@@ -1490,6 +1839,16 @@ class BoardController extends StateNotifier<BoardState> {
       AppLogger().log('Game is over: $winner wins - skipping engine analysis');
       state = state.copyWith(bestLines: [], isEngineThinking: false);
       return;
+    }
+
+    // Stop any ongoing analysis before starting new one
+    if (state.isEngineThinking) {
+      AppLogger().log('Stopping ongoing analysis to start new one');
+      try {
+        _engine?.send('stop');
+      } catch (e) {
+        AppLogger().log('Failed to stop engine: $e');
+      }
     }
 
     // Clear previous best lines when starting a fresh analysis
@@ -1505,27 +1864,32 @@ class BoardController extends StateNotifier<BoardState> {
         // EleEye only supports single PV - ignore MultiPV setting
         AppLogger().log('EleEye single PV analysis (MultiPV not supported)');
         await _engine!.setPosition(state.fen, currentMoves());
-        await _engine!.go(movetimeMs: movetimeMs ?? 1000);
+        await _engine!.go(depth: state.analysisDepth);
       } else if (isPikafish) {
         // Pikafish: use startpos if game from initial position, otherwise FEN
         if (_isGameFromInitialPosition()) {
           await _engine!.setPosition('startpos', currentMoves());
         } else {
-          await _engine!.setPosition(state.fen, currentMoves());
+          // In setup mode, don't pass moves - just use FEN
+          if (state.isSetupMode) {
+            await _engine!.setPosition(state.fen, []);
+          } else {
+            await _engine!.setPosition(state.fen, currentMoves());
+          }
         }
 
         // Clear previous bestLines before new analysis
         state = state.copyWith(bestLines: []);
 
         if (state.multiPv > 1) {
-          await _engine!.go(depth: 16);
+          await _engine!.go(depth: state.analysisDepth);
         } else {
-          await _engine!.go(depth: 16);
+          await _engine!.go(depth: state.analysisDepth);
         }
       } else {
         // Standard path: single PV or other engines
         await _engine!.setPosition(state.fen, currentMoves());
-        await _engine!.go(movetimeMs: movetimeMs ?? 1000);
+        await _engine!.go(depth: state.analysisDepth);
       }
     } catch (e) {
       // Ensure clear thinking state if there's an error
@@ -1739,8 +2103,14 @@ class BoardController extends StateNotifier<BoardState> {
       clearSelection: true,
     );
 
+    // Reset engine to ensure clean state
+    if (_engine != null) {
+      _engine!.newGame();
+      _engine!.setMultiPV(state.multiPv);
+    }
+
     // Trigger engine analysis for the new position
-    _analyzePosition(movetimeMs: 1000);
+    _analyzePosition();
 
     _showNotification(
       'Game started from setup position',
