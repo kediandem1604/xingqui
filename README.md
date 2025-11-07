@@ -1,118 +1,194 @@
-# Xiangqi Flutter App
+# Flutter Application Window - Xiangqi Game
 
-Ứng dụng Flutter để chơi cờ tướng với tích hợp engine AI (Pikafish UCI và EleEye UCCI).
+## 🎮 Tổng quan
 
-## Tính năng
+Dự án Flutter Xiangqi game đã được phát triển hoàn chỉnh với đầy đủ tính năng:
 
-- **Tích hợp Engine**: Hỗ trợ Pikafish (UCI) và EleEye (UCCI)
-- **MultiPV Analysis**: Hiển thị 1-3 nước đi tốt nhất với điểm số và độ sâu
-- **Giao diện tương tác**: Bàn cờ tướng với quân cờ Unicode
-- **Điều hướng lịch sử**: Nút Back/Next để xem lại các nước đi
-- **Phân tích thời gian thực**: Engine phân tích vị trí hiện tại
-- **Chuyển đổi engine**: Có thể chọn giữa Pikafish và EleEye
+- **Complete Xiangqi Game Logic** với full rules validation
+- **Engine Integration** (Pikafish UCI + EleEye UCCI)
+- **AI vs Human Mode** với 3 cấp độ khó
+- **Game Management** (save/load/replay)
+- **Professional UI** với animations và real-time analysis
 
-## Cấu trúc dự án
+## 🚀 Tính năng chính
+
+### ✅ Engine Integration
+- Pikafish Engine (UCI protocol)
+- EleEye Engine (UCCI protocol)  
+- MultiPV analysis (1-3 best moves)
+- Real-time engine analysis
+- Dynamic engine switching
+
+### ✅ Game Management
+- Save/Load games với metadata
+- Game history navigation
+- Replay mode với controls
+- Setup board mode
+- Game statistics
+
+### ✅ AI vs Human Mode
+- **Dễ**: Random moves + occasional bad moves
+- **Trung bình**: Lower scoring best moves  
+- **Khó**: Best moves only
+- Automatic move making
+
+### ✅ UI/UX Features
+- Interactive board với touch controls
+- Move animation và visual feedback
+- Best moves panel
+- Game notifications
+- Responsive layout
+
+### ✅ Core Game Logic
+- Complete Xiangqi rules validation
+- FEN parsing và manipulation
+- Move validation với UCI notation
+- Game status detection
+- Legal move generation
+
+## 📁 Cấu trúc dự án
 
 ```
 lib/
-├── main.dart                 # Entry point
-├── core/                     # Core logic
-│   ├── fen.dart             # FEN parsing và validation
-│   ├── move_notation.dart   # Chuyển đổi ký hiệu nước đi
-│   └── xiangqi_rules.dart   # Luật cờ tướng (Phase 1)
-├── engine/                   # Engine integration
-│   ├── engine_base.dart     # Abstract engine interface
-│   ├── pikafish_engine.dart # Pikafish (UCI protocol)
-│   ├── ucci_engine.dart     # EleEye (UCCI protocol)
-│   └── engine_parser.dart   # Parse engine output
-└── features/board/           # UI components
-    ├── board_controller.dart # State management (Riverpod)
-    ├── board_view.dart      # Bàn cờ tương tác
-    ├── controls.dart        # Nút điều khiển
-    └── best_moves_panel.dart # Panel hiển thị nước đi tốt nhất
+├── core/                    # Core game logic
+│   ├── fen.dart            # FEN parsing
+│   ├── xiangqi_rules.dart  # Game rules
+│   ├── move_notation.dart  # Move notation
+│   └── logger.dart         # Logging
+├── engine/                 # Engine integration
+│   ├── engine_base.dart    # Engine interface
+│   ├── engine_parser.dart  # Message parsing
+│   ├── pikafish_engine.dart # Pikafish UCI
+│   └── ucci_engine.dart    # EleEye UCCI
+├── features/board/         # Board management
+│   ├── board_controller.dart # Main controller
+│   ├── board_view.dart     # Board UI
+│   └── best_moves_panel.dart # Analysis display
+├── models/                 # Data models
+│   └── saved_game.dart     # Saved game model
+├── services/               # Business logic
+│   ├── game_status_service.dart # Game status
+│   └── saved_games_service.dart # Persistence
+├── widgets/                # UI components
+│   ├── game_notification.dart    # Notifications
+│   └── side_selection_dialog.dart # Side selection
+└── main.dart              # App entry point
 ```
 
-## Cài đặt
+## 🔧 Dependencies
 
-1. **Cài đặt Flutter**: Đảm bảo Flutter SDK đã được cài đặt
-2. **Cài đặt dependencies**:
-   ```bash
-   flutter pub get
-   ```
-3. **Chuẩn bị engines**: Copy engine binaries vào thư mục `engines/`
-   - `engines/pikafish/win/pikafish.exe`
-   - `engines/pikafish/win/pikafish.nnue`
-   - `engines/eleeye/win/eleeye.exe`
+```yaml
+dependencies:
+  flutter_riverpod: ^2.5.1
+  freezed_annotation: ^2.4.4
+  collection: ^1.18.0
+  flutter_svg: ^2.0.10+1
+  path_provider: ^2.1.4
+  process_run: ^1.0.0
 
-## Chạy ứng dụng
-
-### Desktop (Windows)
-```bash
-flutter run -d windows
+dev_dependencies:
+  build_runner: ^2.4.11
+  freezed: ^2.5.7
 ```
 
-### Test engines
-```bash
-test_engines.bat
+## 📋 Chuyển đổi sang Android
+
+### Quick Start:
+1. Copy tất cả files từ `lib/` folder
+2. Add dependencies vào `pubspec.yaml`
+3. Run `flutter pub get`
+4. Update `main.dart` với Riverpod setup
+5. Test trên Android device
+
+### Chi tiết:
+- Xem `MIGRATION_GUIDE.md` cho hướng dẫn đầy đủ
+- Xem `FEATURES_CHECKLIST.md` cho checklist chi tiết
+
+## 🎯 Key Features Ready for Android
+
+### Engine Integration
+```dart
+// Switch engine
+await controller.switchEngine('Pikafish');
+await controller.setMultiPv(3);
+await controller.setAnalysisDepth(16);
 ```
 
-## Sử dụng
+### AI Mode
+```dart
+// Start AI vs Human
+await controller.startVsEngineMode('hard');
+```
 
-1. **Chọn engine**: Sử dụng dropdown để chọn Pikafish hoặc EleEye
-2. **Chọn số nước đi tốt nhất**: Slider từ 1-3
-3. **Chọn bên đi trước**: Red hoặc Black
-4. **Điều hướng**: Sử dụng nút Back/Next để xem lại lịch sử
-5. **Reset**: Nút Reset để quay về vị trí ban đầu
+### Game Management
+```dart
+// Save game
+await controller.saveCurrentGame('My Game');
 
-## Giao diện
+// Load game  
+await controller.loadSavedGame(gameId);
 
-- **Bàn cờ**: Hiển thị vị trí hiện tại với quân cờ Unicode
-- **Panel điều khiển**: Engine selection, MultiPV, side selection, navigation
-- **Panel nước đi tốt nhất**: Hiển thị phân tích engine với điểm số và độ sâu
-- **Lịch sử nước đi**: Hiển thị chuỗi nước đi đã chơi
+// Replay
+await controller.startReplay(moves);
+```
 
-## Phase 1 vs Phase 2
+### State Management
+```dart
+// Watch state
+Consumer(
+  builder: (context, ref, child) {
+    final state = ref.watch(boardControllerProvider);
+    return BoardView(showBestMoves: true);
+  },
+)
+```
 
-### Phase 1 (Hiện tại)
-- ✅ Tích hợp engine cơ bản
-- ✅ Hiển thị bàn cờ và quân cờ
-- ✅ MultiPV analysis
-- ✅ Navigation controls
-- ✅ Basic move validation
-- ❌ Piece movement (drag & drop)
-- ❌ Full game logic
+## ⚠️ Android Considerations
 
-### Phase 2 (Tương lai)
-- 🔄 Complete piece movement
-- 🔄 Full Xiangqi rules validation
-- 🔄 Check/checkmate detection
-- 🔄 Game result detection
-- 🔄 Opening book integration
-- 🔄 Time controls
+1. **Engine Files**: Place trong assets hoặc download dynamically
+2. **Permissions**: May need Android permissions cho external processes
+3. **Performance**: Optimize analysis depth cho mobile
+4. **UI**: Adjust layout cho mobile screen sizes
 
-## Troubleshooting
+## 🎮 Game Features
 
-### Engine không khởi động
-- Kiểm tra đường dẫn engine trong `engines/` folder
-- Đảm bảo file `pikafish.nnue` tồn tại cho Pikafish
-- Chạy `test_engines.bat` để test riêng lẻ
+### Piece Movement
+- **Chariot (R/r)**: Horizontal/vertical, any distance
+- **Horse (H/h)**: L-shaped moves, can't be blocked
+- **Elephant (E/e)**: Diagonal 2 squares, can't cross river
+- **Advisor (A/a)**: Diagonal 1 square, palace only
+- **King (K/k)**: 1 square horizontal/vertical, palace only
+- **Cannon (C/c)**: Like chariot, must jump to capture
+- **Pawn (P/p)**: Forward only, sideways after crossing river
 
-### Lỗi Flutter
-- Chạy `flutter clean` và `flutter pub get`
-- Kiểm tra Flutter version: `flutter --version`
-- Đảm bảo Windows desktop support được enable
+### Game Status
+- **Check**: King under attack
+- **Checkmate**: King under attack, no legal moves
+- **Stalemate**: No legal moves, king not under attack
+- **King Capture**: King captured (immediate win)
 
-### Performance
-- Giảm MultiPV từ 3 xuống 1-2 nếu engine chậm
-- Giảm search depth trong code nếu cần
+### AI Difficulty
+- **Easy**: Random moves + occasional bad moves
+- **Medium**: Lower scoring best moves
+- **Hard**: Best moves only
 
-## Dependencies
+## 🚀 Ready for Production
 
-- `flutter_riverpod`: State management
-- `freezed_annotation`: Code generation
-- `collection`: Utilities
-- `build_runner`: Code generation tools
+Tất cả tính năng đã được test và hoạt động ổn định:
 
-## License
+- ✅ Complete game logic
+- ✅ Engine integration
+- ✅ AI opponent
+- ✅ Game management
+- ✅ Professional UI
+- ✅ Mobile optimization ready
 
-MIT License - Xem file LICENSE để biết thêm chi tiết.
+## 📞 Support
+
+Nếu gặp vấn đề:
+1. Check dependencies và imports
+2. Verify engine files và paths
+3. Check Riverpod setup
+4. Review AppLogger output
+
+**Chúc bạn tích hợp thành công!** 🎯

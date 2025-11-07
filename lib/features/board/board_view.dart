@@ -750,7 +750,7 @@ Widget _buildSetupModeUI(BoardState state, BoardController controller) {
                                               controller,
                                             ),
                                         child: DragTarget<String>(
-                                          onWillAccept: (data) {
+                                          onWillAcceptWithDetails: (data) {
                                             print(
                                               'DragTarget onWillAccept: $data',
                                             );
@@ -791,7 +791,7 @@ Widget _buildSetupModeUI(BoardState state, BoardController controller) {
                                               'Board size: ${constraints.biggest}',
                                             );
                                             print(
-                                              'Cell: ${cellWidth}x${cellHeight}',
+                                              'Cell: ${cellWidth}x$cellHeight',
                                             );
                                             print(
                                               'Raw global offset: ${details.offset}',
